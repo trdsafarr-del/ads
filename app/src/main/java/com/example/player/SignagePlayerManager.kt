@@ -231,6 +231,60 @@ class SignagePlayerManager(private val context: Context) {
     }
 
     /**
+     * Immediately interrupts whatever is currently playing (including VAST ads or previous streams)
+     * and starts playing the requested video(s) right away at 0ms.
+     */
+    fun forcePlayImmediately(items: List<PlaylistItem>, startVideoId: String?) {
+        val player = exoPlayer ?: return
+        if (items.isEmpty()) return
+
+        lastLoadedSignature = ""
+        currentPlaylistItems = items
+        _isAdPlaying.value = false
+
+        val directFactory = DefaultMediaSourceFactory(ResilientSignageDataSource.Factory(context))
+        val concatenatingMediaSource = ConcatenatingMediaSource()
+
+        for (item in items) {
+            val uri = resolveUri(item)
+            val mediaItem = MediaItem.Builder()
+                .setUri(uri)
+                .setMediaId(item.id)
+                .build()
+            val mediaSource = directFactory.createMediaSource(mediaItem)
+            concatenatingMediaSource.addMediaSource(mediaSource)
+        }
+
+        val targetIndex = if (!startVideoId.isNullOrBlank()) {
+            items.indexOfFirst { it.id == startVideoId }.takeIf { it >= 0 } ?: 0
+        } else {
+            0
+        }
+
+        player.stop()
+        player.clearMediaItems()
+        player.setMediaSource(concatenatingMediaSource)
+        if (targetIndex > 0) {
+            player.seekTo(targetIndex, 0L)
+        } else {
+            player.seekTo(0, 0L)
+        }
+        player.repeatMode = Player.REPEAT_MODE_ALL
+        player.prepare()
+        player.playWhenReady = true
+        player.play()
+
+        lastLoadedSignature = items.joinToString("|") {
+            "${it.id}:${it.localFilePath ?: it.videoUrl}:${it.adTagUrl ?: ""}"
+        }
+        _currentMediaIndex.value = targetIndex
+        val active = items.getOrNull(targetIndex) ?: items.firstOrNull()
+        _currentTitle.value = active?.title ?: ""
+        _currentMediaId.value = active?.id ?: ""
+        Log.i(TAG, "Force-playing ${items.size} videos immediately (starting at index=$targetIndex, id=${active?.id})")
+    }
+
+    /**
      * Immediately seeks to and plays a specific video by ID (used when a video is pushed from CMS or Admin).
      */
     fun playVideoById(videoId: String) {
@@ -245,21 +299,17 @@ class SignagePlayerManager(private val context: Context) {
             _currentTitle.value = item.title
             _currentMediaId.value = item.id
             Log.i(TAG, "Auto-playing pushed video immediately: ${item.title} (index=$targetIndex)")
+        } else if (currentPlaylistItems.isNotEmpty()) {
+            forcePlayImmediately(currentPlaylistItems, videoId)
         }
     }
 
     private fun resolveUri(item: PlaylistItem): Uri {
         if (!item.localFilePath.isNullOrBlank()) {
             val file = File(item.localFilePath)
-            if (SignageSampleVideoGenerator.isValidMp4File(file)) {
+            if (file.exists() && file.length() > 1024L && SignageSampleVideoGenerator.isValidMp4File(file)) {
                 Log.d(TAG, "Playing from offline cache: ${file.absolutePath}")
                 return Uri.fromFile(file)
-            }
-        }
-        if (ResilientSignageDataSource.isKnownRestrictedUrl(item.videoUrl)) {
-            val fallbackFile = SignageSampleVideoGenerator.getOrCreateFallbackVideo(context, item.id)
-            if (SignageSampleVideoGenerator.isValidMp4File(fallbackFile)) {
-                return Uri.fromFile(fallbackFile)
             }
         }
         return Uri.parse(item.videoUrl)

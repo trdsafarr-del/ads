@@ -8,6 +8,7 @@ module.exports = (req, res) => {
 
   const state = loadState();
   state.devices = state.devices || {};
+  state.queuedActions = state.queuedActions || {};
 
   if (req.method === 'GET') {
     const deviceId = req.query && req.query.deviceId;
@@ -20,9 +21,42 @@ module.exports = (req, res) => {
       };
       saveState(state);
 
-      // Return playlist tailored with this specific device's Screen Orientation, Video Orientation & Scale Mode
+      // Filter to active selected multi-video queue if configured for this device or globally
+      const allVideos = Array.isArray(state.playlist.videos) ? state.playlist.videos : [];
+      const activeIds =
+        Array.isArray(dev.activeVideoIds) && dev.activeVideoIds.length > 0
+          ? dev.activeVideoIds
+          : Array.isArray(state.playlist.activeVideoIds) && state.playlist.activeVideoIds.length > 0
+          ? state.playlist.activeVideoIds
+          : null;
+
+      let deviceVideos = allVideos;
+      if (activeIds) {
+        const filtered = activeIds
+          .map((id) => allVideos.find((v) => v.id === id))
+          .filter(Boolean)
+          .map((v, idx) => ({ ...v, order: idx + 1 }));
+        if (filtered.length > 0) {
+          deviceVideos = filtered;
+        }
+      }
+
+      const devicePushTs = Math.max(
+        Number(dev.lastPushTimestamp) || 0,
+        Number(state.playlist.lastPushTimestamp) || 0
+      );
+      const devicePushedVideoId =
+        (Number(dev.lastPushTimestamp) || 0) >= (Number(state.playlist.lastPushTimestamp) || 0) &&
+        dev.lastPushedVideoId
+          ? dev.lastPushedVideoId
+          : state.playlist.lastPushedVideoId || (deviceVideos[0] && deviceVideos[0].id) || null;
+
+      // Return playlist tailored with this specific device's Screen Orientation, Video Orientation, Scale Mode & Play Queue
       const devicePlaylist = {
         ...state.playlist,
+        videos: deviceVideos,
+        lastPushedVideoId: devicePushedVideoId,
+        lastPushTimestamp: devicePushTs,
         orientation: dev.screenOrientation || state.playlist.orientation || 'LANDSCAPE',
         videoOrientation:
           dev.videoOrientation !== undefined && dev.videoOrientation !== null
@@ -79,6 +113,14 @@ module.exports = (req, res) => {
       current.videos = [...(current.videos || []), newVideo];
       current.lastPushedVideoId = newId;
       current.lastPushTimestamp = Date.now();
+      current.activeVideoIds = null;
+      Object.keys(state.devices).forEach((id) => {
+        if (state.devices[id]) {
+          state.devices[id].activeVideoIds = null;
+          state.devices[id].lastPushedVideoId = newId;
+          state.devices[id].lastPushTimestamp = current.lastPushTimestamp;
+        }
+      });
     } else if (Array.isArray(body.videos)) {
       current.videos = body.videos.map((v, idx) => ({
         id: v.id || `vid_${Date.now()}_${idx + 1}`,
@@ -91,20 +133,44 @@ module.exports = (req, res) => {
       }));
     }
 
+    if (Array.isArray(body.activeVideoIds)) {
+      current.activeVideoIds = body.activeVideoIds.length > 0 ? body.activeVideoIds : null;
+    }
+
     if (typeof body.tickerText === 'string') {
       current.tickerText = body.tickerText;
     }
 
-    if (typeof body.orientation === 'string') {
-      current.orientation = body.orientation;
+    // When global orientation/videoOrientation/scaleMode is changed on the Web Dashboard,
+    // also update all paired devices so every TV applies the new orientation immediately!
+    if (typeof body.orientation === 'string' && body.orientation.trim() !== '') {
+      const orient = body.orientation.trim();
+      current.orientation = orient;
+      Object.keys(state.devices).forEach((id) => {
+        if (state.devices[id]) {
+          state.devices[id].screenOrientation = orient;
+        }
+      });
     }
 
     if (body.videoOrientation !== undefined && body.videoOrientation !== null) {
-      current.videoOrientation = Number(body.videoOrientation) || 0;
+      const vDeg = Number(body.videoOrientation) || 0;
+      current.videoOrientation = vDeg;
+      Object.keys(state.devices).forEach((id) => {
+        if (state.devices[id]) {
+          state.devices[id].videoOrientation = vDeg;
+        }
+      });
     }
 
-    if (typeof body.scaleMode === 'string') {
-      current.scaleMode = body.scaleMode;
+    if (typeof body.scaleMode === 'string' && body.scaleMode.trim() !== '') {
+      const sm = body.scaleMode.trim();
+      current.scaleMode = sm;
+      Object.keys(state.devices).forEach((id) => {
+        if (state.devices[id]) {
+          state.devices[id].scaleMode = sm;
+        }
+      });
     }
 
     if (typeof body.tickerEnabled === 'boolean') {
@@ -124,8 +190,16 @@ module.exports = (req, res) => {
     }
 
     if (typeof body.lastPushedVideoId === 'string' && body.lastPushedVideoId.trim() !== '') {
-      current.lastPushedVideoId = body.lastPushedVideoId.trim();
-      current.lastPushTimestamp = Date.now();
+      const pushedId = body.lastPushedVideoId.trim();
+      const nowTs = Date.now();
+      current.lastPushedVideoId = pushedId;
+      current.lastPushTimestamp = nowTs;
+      Object.keys(state.devices).forEach((id) => {
+        if (state.devices[id]) {
+          state.devices[id].lastPushedVideoId = pushedId;
+          state.devices[id].lastPushTimestamp = nowTs;
+        }
+      });
     }
 
     if (typeof body.offlineDownloadRequestedVideoId === 'string') {

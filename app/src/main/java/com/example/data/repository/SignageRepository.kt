@@ -93,6 +93,7 @@ class SignageRepository(private val context: Context) {
     val playlistFlow: StateFlow<PlaylistResponse> = _playlistFlow.asStateFlow()
 
     init {
+        localStore.purgeSyntheticFallbackVideos()
         loadInitialPlaylist()
     }
 
@@ -100,11 +101,12 @@ class SignageRepository(private val context: Context) {
         val cached = kotlinx.coroutines.runBlocking {
             loadFromRoomOrCache()
         }
+        val shouldSynthesize = !hasInternetConnection()
         if (cached != null && cached.items.isNotEmpty()) {
-            _playlistFlow.value = resolveLocalFilePaths(cached, autoSynthesizeMissing = true)
+            _playlistFlow.value = resolveLocalFilePaths(cached, autoSynthesizeMissing = shouldSynthesize)
         } else {
             val def = createDefaultPlaylist()
-            _playlistFlow.value = resolveLocalFilePaths(def, autoSynthesizeMissing = true)
+            _playlistFlow.value = resolveLocalFilePaths(def, autoSynthesizeMissing = shouldSynthesize)
         }
     }
 
@@ -146,6 +148,10 @@ class SignageRepository(private val context: Context) {
         playlist: PlaylistResponse,
         autoSynthesizeMissing: Boolean = false
     ): PlaylistResponse {
+        val isOnline = hasInternetConnection()
+        if (isOnline) {
+            localStore.purgeSyntheticFallbackVideos()
+        }
         val updatedItems = playlist.items.mapIndexed { index, item ->
             val cleanUrl = sanitizeVideoUrl(item.videoUrl, index + 1)
             val sanitizedItem = item.copy(videoUrl = cleanUrl)
@@ -154,7 +160,7 @@ class SignageRepository(private val context: Context) {
                 SignageSampleVideoGenerator.isValidMp4File(File(it))
             }
             val isExplicitOffline = localStore.isVideoOfflineDownloaded(sanitizedItem.id)
-            val finalPath = validExisting ?: if (autoSynthesizeMissing || isExplicitOffline) {
+            val finalPath = validExisting ?: if (autoSynthesizeMissing && !isOnline) {
                 SignageSampleVideoGenerator.getOrCreateVideoForItem(
                     context = context,
                     item = sanitizedItem,
@@ -309,6 +315,11 @@ class SignageRepository(private val context: Context) {
                     serverAction.startsWith("playVideo:") -> {
                         actionPlayVideoId = serverAction.removePrefix("playVideo:").trim()
                     }
+                    serverAction.startsWith("playVideosNow:") -> {
+                        val parts = serverAction.removePrefix("playVideosNow:").split(":")
+                        actionPlayVideoId = parts.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: resolved.items.firstOrNull()?.id
+                    }
                     serverAction.startsWith("downloadOffline:") -> {
                         val targetId = serverAction.removePrefix("downloadOffline:").trim()
                         resolved.items.find { it.id == targetId }?.let { item ->
@@ -331,18 +342,24 @@ class SignageRepository(private val context: Context) {
                 !localStore.hasShownOfflinePopupFor(item.id) && !localStore.isVideoOfflineDownloaded(item.id)
             }
 
-            // Detect if a video was newly pushed for immediate auto-play
+            // Detect if a video or multi-video queue was newly pushed for immediate auto-play
             val lastHandledPushTs = localStore.getLastHandledPushTimestamp()
             var pushedVideoToPlay: String? = actionPlayVideoId
-            if (resolved.lastPushTimestamp > lastHandledPushTs && !resolved.lastPushedVideoId.isNullOrBlank()) {
+            if (resolved.lastPushTimestamp > lastHandledPushTs) {
                 localStore.setLastHandledPushTimestamp(resolved.lastPushTimestamp)
-                pushedVideoToPlay = resolved.lastPushedVideoId
+                val targetId = resolved.lastPushedVideoId?.takeIf { it.isNotBlank() }
+                    ?: resolved.items.firstOrNull()?.id
+                if (!targetId.isNullOrBlank()) {
+                    pushedVideoToPlay = targetId
+                }
             }
 
             // Update Room & in-memory flow if anything changed
             val current = _playlistFlow.value
-            val hasChanges = current.version != resolved.version ||
-                current.items.map { it.id to it.isOfflineDownloaded } != resolved.items.map { it.id to it.isOfflineDownloaded } ||
+            val hasChanges = pushedVideoToPlay != null ||
+                current.version != resolved.version ||
+                current.items.map { Triple(it.id, it.videoUrl, it.isOfflineDownloaded) } !=
+                    resolved.items.map { Triple(it.id, it.videoUrl, it.isOfflineDownloaded) } ||
                 current.orientation != resolved.orientation ||
                 current.videoOrientation != resolved.videoOrientation ||
                 current.scaleMode != resolved.scaleMode ||
@@ -386,19 +403,11 @@ class SignageRepository(private val context: Context) {
         val localFile = localStore.getLocalVideoFile(item)
         val api = createRetrofit(localStore.getApiServerUrl())
 
-        var isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(localFile)
-        if (!isReadyOnDisk || localFile.length() < 100_000L) {
+        var isReadyOnDisk = localFile.exists() && localFile.length() > 1024L &&
+            SignageSampleVideoGenerator.isValidMp4File(localFile)
+        if (!isReadyOnDisk) {
             val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
             isReadyOnDisk = downloaded && SignageSampleVideoGenerator.isValidMp4File(localFile)
-        }
-
-        if (!isReadyOnDisk) {
-            val fallback = SignageSampleVideoGenerator.getOrCreateVideoForItem(
-                context = context,
-                item = item,
-                targetFile = localFile
-            )
-            isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(fallback)
         }
 
         if (isReadyOnDisk) {
@@ -477,9 +486,10 @@ class SignageRepository(private val context: Context) {
                     _syncState.value = SyncState.Syncing("Downloading: ${item.title} (${index + 1}/$totalVideos)", progress)
 
                     val localFile = localStore.getLocalVideoFile(item)
-                    var isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(localFile)
+                    var isReadyOnDisk = localFile.exists() && localFile.length() > 1024L &&
+                        SignageSampleVideoGenerator.isValidMp4File(localFile)
 
-                    if (!isReadyOnDisk || localFile.length() < 150_000L) {
+                    if (!isReadyOnDisk) {
                         val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
                         if (downloaded) {
                             if (verifyChecksum(localFile, item.checksum)) {
@@ -491,19 +501,10 @@ class SignageRepository(private val context: Context) {
                         }
                     }
 
-                    if (!isReadyOnDisk) {
-                        val fallback = SignageSampleVideoGenerator.getOrCreateVideoForItem(
-                            context = context,
-                            item = item,
-                            targetFile = localFile
-                        )
-                        isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(fallback)
-                    }
-
                     val finalPath = if (isReadyOnDisk) localFile.absolutePath else null
                     val updatedItem = item.copy(
                         localFilePath = finalPath,
-                        isOfflineDownloaded = localStore.isVideoOfflineDownloaded(item.id)
+                        isOfflineDownloaded = isReadyOnDisk && localStore.isVideoOfflineDownloaded(item.id)
                     )
                     updatedItems.add(updatedItem)
 
@@ -1141,10 +1142,10 @@ class SignageRepository(private val context: Context) {
                 version = 1,
                 syncIntervalMinutes = 15,
                 defaultAdTagUrl = SAMPLE_VAST_TAG,
-                tickerText = "★ LIVE DIGITAL SIGNAGE ★ Continuous Gapless Loop • Instant Push Auto-Play • Offline Video Caching • 24/7 Watchdog Recovery",
+                tickerText = "",
                 orientation = "LANDSCAPE",
                 scaleMode = "ZOOM",
-                tickerEnabled = true,
+                tickerEnabled = false,
                 isMuted = false,
                 kioskLocked = true,
                 autoBootEnabled = true,
@@ -1154,9 +1155,9 @@ class SignageRepository(private val context: Context) {
                         title = "Brand Showcase: Nature & Animation",
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[0],
                         durationSeconds = 60,
-                        adTagUrl = SAMPLE_VAST_TAG,
+                        adTagUrl = null,
                         order = 1,
-                        isOfflineDownloaded = true
+                        isOfflineDownloaded = false
                     ),
                     PlaylistItem(
                         id = "vid_dream",
@@ -1165,16 +1166,16 @@ class SignageRepository(private val context: Context) {
                         durationSeconds = 45,
                         adTagUrl = null,
                         order = 2,
-                        isOfflineDownloaded = true
+                        isOfflineDownloaded = false
                     ),
                     PlaylistItem(
                         id = "vid_blazes",
                         title = "High Energy Automotive Commercial",
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[2],
                         durationSeconds = 30,
-                        adTagUrl = SAMPLE_VAST_TAG,
+                        adTagUrl = null,
                         order = 3,
-                        isOfflineDownloaded = true
+                        isOfflineDownloaded = false
                     ),
                     PlaylistItem(
                         id = "vid_bullrun",
@@ -1183,7 +1184,7 @@ class SignageRepository(private val context: Context) {
                         durationSeconds = 40,
                         adTagUrl = null,
                         order = 4,
-                        isOfflineDownloaded = true
+                        isOfflineDownloaded = false
                     )
                 )
             )

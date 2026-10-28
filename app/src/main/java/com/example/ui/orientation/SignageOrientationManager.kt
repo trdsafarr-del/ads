@@ -6,48 +6,62 @@ import android.content.pm.ActivityInfo
 enum class SignageOrientation(
     val id: String,
     val title: String,
+    val shortLabel: String,
     val description: String,
-    val activityOrientation: Int
+    val activityOrientation: Int,
+    val fallbackRotationDegrees: Int
 ) {
     LANDSCAPE(
         id = "LANDSCAPE",
         title = "Landscape (0° Horizontal)",
+        shortLabel = "Landscape",
         description = "Standard 16:9 TV & Wall Displays",
-        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+        fallbackRotationDegrees = 0
     ),
     PORTRAIT(
         id = "PORTRAIT",
         title = "Portrait (90° Vertical)",
+        shortLabel = "Portrait",
         description = "9:16 Totems, Menu Boards & Kiosk Pillars",
-        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
+        fallbackRotationDegrees = 90
     ),
     REVERSE_LANDSCAPE(
         id = "REVERSE_LANDSCAPE",
         title = "Reverse Landscape (180°)",
+        shortLabel = "Rev Landscape",
         description = "180° Upside-down Ceiling Mounts",
-        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE,
+        fallbackRotationDegrees = 180
     ),
     REVERSE_PORTRAIT(
         id = "REVERSE_PORTRAIT",
         title = "Reverse Portrait (270°)",
+        shortLabel = "Rev Portrait",
         description = "270° Inverted Vertical Displays",
-        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT,
+        fallbackRotationDegrees = 270
     ),
     AUTO(
         id = "AUTO",
         title = "Auto / Full Sensor",
+        shortLabel = "Auto",
         description = "Follows Device Gyroscope / Hardware Sensor",
-        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        activityOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR,
+        fallbackRotationDegrees = 0
     );
 
     companion object {
         fun fromId(id: String): SignageOrientation {
-            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: LANDSCAPE
+            return entries.firstOrNull { it.id.equals(id.trim(), ignoreCase = true) } ?: LANDSCAPE
         }
 
         fun applyOrientation(activity: Activity, orientation: SignageOrientation) {
             try {
-                activity.requestedOrientation = orientation.activityOrientation
+                if (activity.requestedOrientation != orientation.activityOrientation) {
+                    activity.requestedOrientation = orientation.activityOrientation
+                }
             } catch (_: Exception) {}
         }
     }

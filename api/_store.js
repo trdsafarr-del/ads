@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const STATE_FILE = path.join('/tmp', 'signage_cms_state_v3.json');
+const STATE_FILE = path.join('/tmp', 'signage_cms_state_v4.json');
 const UPLOAD_DIR = path.join('/tmp', 'signage_uploads');
 
 try {
@@ -29,15 +29,15 @@ const DEFAULT_STATE = {
     orientation: 'LANDSCAPE',
     videoOrientation: 0,
     scaleMode: 'ZOOM',
-    tickerEnabled: true,
+    tickerEnabled: false,
     isMuted: false,
     kioskLocked: true,
     autoBootEnabled: true,
     lastPushedVideoId: null,
     lastPushTimestamp: 0,
     offlineDownloadRequestedVideoId: null,
-    tickerText:
-      '★ LIVE DIGITAL SIGNAGE (ads-broo.vercel.app) ★ Continuous Gapless Loop • Instant Push Auto-Play • Offline Video Caching • 24/7 Watchdog Recovery',
+    activeVideoIds: null,
+    tickerText: '',
     ads: [
       {
         vastTag: SAMPLE_VAST_TAG,
@@ -59,7 +59,7 @@ const DEFAULT_STATE = {
         order: 1,
         duration: 60,
         checksum: null,
-        adTagUrl: SAMPLE_VAST_TAG
+        adTagUrl: null
       },
       {
         id: 'vid_dream',
@@ -77,7 +77,7 @@ const DEFAULT_STATE = {
         order: 3,
         duration: 30,
         checksum: null,
-        adTagUrl: SAMPLE_VAST_TAG
+        adTagUrl: null
       },
       {
         id: 'vid_bullrun',
@@ -92,7 +92,8 @@ const DEFAULT_STATE = {
   },
   approvedCodes: {},
   devices: {},
-  queuedActions: {}
+  queuedActions: {},
+  uploadedVideos: {}
 };
 
 function sanitizeUrl(url, index) {
@@ -113,6 +114,9 @@ function loadState() {
         playlist: {
           ...DEFAULT_STATE.playlist,
           ...(parsed.playlist || {})
+        },
+        uploadedVideos: {
+          ...(parsed.uploadedVideos || {})
         }
       };
       if (Array.isArray(merged.playlist.videos)) {

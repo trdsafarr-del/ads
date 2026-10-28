@@ -404,7 +404,6 @@
       border-radius: 8px;
     }
 
-    /* Mode Tabs for Link vs File Upload */
     .mode-tabs {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -448,6 +447,18 @@
       background: rgba(0, 229, 255, 0.08);
     }
 
+    /* Multi-Video Play Control Bar */
+    .multi-play-bar {
+      background: linear-gradient(135deg, rgba(0, 230, 118, 0.1), rgba(0, 229, 255, 0.08));
+      border: 1px solid rgba(0, 230, 118, 0.4);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     .video-list {
       display: flex;
       flex-direction: column;
@@ -462,14 +473,14 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
       min-width: 0;
       transition: border-color 0.15s ease;
     }
 
     .video-item.playing-now {
       border-color: var(--emerald);
-      box-shadow: 0 0 16px rgba(0, 230, 118, 0.12);
+      box-shadow: 0 0 16px rgba(0, 230, 118, 0.14);
     }
 
     .video-meta {
@@ -538,7 +549,7 @@
 
     .toggle-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
       margin-bottom: 14px;
     }
@@ -622,6 +633,9 @@
       border: 1px solid var(--border);
       aspect-ratio: 16 / 9;
       margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .monitor-player-wrap video {
@@ -629,6 +643,7 @@
       height: 100%;
       object-fit: cover;
       display: block;
+      transition: transform 0.25s ease;
     }
 
     /* Offline Download Popup Modal */
@@ -680,16 +695,17 @@
         <div class="brand-icon">TV</div>
         <div class="brand-text">
           <h1>SignageTV Cloud CMS Dashboard</h1>
-          <p>Live Remote Control, Video Upload &amp; Auto-Play Push Server &bull; <a href="https://ads-broo.vercel.app/" target="_blank">https://ads-broo.vercel.app/</a></p>
+          <p>Live Multi-Video Play, Real Video Upload &amp; Per-Device Orientation &bull; <a href="https://ads-broo.vercel.app/" target="_blank">https://ads-broo.vercel.app/</a></p>
         </div>
       </div>
 
       <div class="header-actions">
         <a class="btn btn-outline" href="/api/playlist" target="_blank">View /api/playlist JSON</a>
+        <button class="btn btn-emerald" onclick="playAllVideosNow()">&#9654; Play All Videos on TVs Now</button>
         <button class="btn btn-cyan" onclick="publishAllChanges()">Publish &amp; Push to All TVs</button>
         <div class="status-pill">
           <span class="dot"></span>
-          <span>Real-Time Sync Online</span>
+          <span>Live 2.5s Sync Active</span>
         </div>
       </div>
     </div>
@@ -702,7 +718,7 @@
         <div class="stat-info">
           <div class="stat-label">Playlist Version</div>
           <div class="stat-val" id="statVersion">v1</div>
-          <div class="stat-sub">Real-Time 5s Sync</div>
+          <div class="stat-sub">Real-Time 2.5s Sync</div>
         </div>
         <div class="stat-badge-icon">&#8635;</div>
       </div>
@@ -711,7 +727,7 @@
         <div class="stat-info">
           <div class="stat-label">Active Videos</div>
           <div class="stat-val" id="statVideos">4</div>
-          <div class="stat-sub">Auto-Play on Push</div>
+          <div class="stat-sub">Multi-Video Force Play</div>
         </div>
         <div class="stat-badge-icon">&#9654;</div>
       </div>
@@ -740,19 +756,51 @@
       <!-- Left Column -->
       <div class="col-stack">
 
-        <!-- 1. Playlist Manager + Link or File Upload -->
+        <!-- 1. Multi-Video Play + Real Video Upload & Instant Push Manager -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><span class="step-num">1</span> Video Upload / Link &amp; Instant Push Manager</span>
+            <span class="card-title"><span class="step-num">1</span> Multi-Video Play, Real Upload &amp; Instant Push</span>
             <span class="badge" id="videoCountBadge">4 Videos</span>
+          </div>
+
+          <!-- Multi-Video Play & Target Device Bar -->
+          <div class="multi-play-bar">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <label style="display:inline-flex; align-items:center; gap:7px; color:#fff; font-weight:800; margin-bottom:0; cursor:pointer;">
+                  <input type="checkbox" id="selectAllVideosCheck" checked onchange="toggleSelectAllVideos(this.checked)" style="width:16px; height:16px;" />
+                  <span>Select Videos to Play Together</span>
+                </label>
+                <span class="badge badge-offline" id="selectedCountBadge">All Selected</span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span style="font-size:11.5px; color:var(--cyan); font-weight:700;">Target Device:</span>
+                <select id="playTargetDeviceSelect" style="width:auto; min-width:190px; margin-bottom:0; padding:7px 10px; font-size:12px;">
+                  <option value="*">All Paired TVs (Everywhere)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn btn-emerald" style="flex:1;" onclick="playSelectedVideosNow()">
+                &#9654; Play Selected Videos on Target TV(s) Now
+              </button>
+              <button class="btn btn-cyan" onclick="playAllVideosNow()">
+                &#9654; Play All Videos Loop Now
+              </button>
+            </div>
+            <div style="font-size:11px; color:var(--muted);">
+              Clicking <strong>Play</strong> immediately closes any open screen/menu on the target Android TV(s) and plays the selected video(s) right away.
+            </div>
           </div>
 
           <div class="video-list" id="videoListContainer"></div>
 
           <div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
-              <h4 style="font-size: 14px; color: var(--emerald); font-weight: 800;">+ Add Video (Link OR Upload File) &amp; Push to Play</h4>
-              <span style="font-size: 11px; color: var(--muted);">Auto-plays on all screens after Push</span>
+              <h4 style="font-size: 14px; color: var(--emerald); font-weight: 800;">+ Add Video (Link OR Upload Real File) &amp; Push to Play</h4>
+              <span style="font-size: 11px; color: var(--muted);">Streams your exact uploaded video on Preview &amp; Android TV</span>
             </div>
 
             <!-- Dual Option Tabs: Link vs Upload Video File -->
@@ -802,19 +850,19 @@
                 <div id="uploadFileStatusText" style="font-size: 13px; font-weight: 700; color: var(--cyan);">
                   Click here to choose a video file to upload
                 </div>
-                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-                  Automatically uploads to Cloud Server &amp; pushes to Android TVs + Offline Cache
+                <div id="uploadProgressSubText" style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                  Real Chunked + CDN Cloud Upload &mdash; Plays your exact uploaded video on Preview &amp; Android TV
                 </div>
               </div>
             </div>
 
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:6px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:#fff; margin-bottom:0;">
-                <input type="checkbox" id="newVideoVast" checked />
+                <input type="checkbox" id="newVideoVast" />
                 <span>Enable Google IMA VAST Ad Pre-Roll</span>
               </label>
               <button class="btn btn-emerald" id="addAndPushBtn" onclick="addVideoItem(true)">
-                &#128640; Upload / Add &amp; Push to Play Now
+                &#128640; Upload / Add &amp; Play on TVs Now
               </button>
             </div>
           </div>
@@ -823,14 +871,14 @@
         <!-- 2. Real-Time Android App Settings & Orientation -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><span class="step-num">2</span> Live Android App Settings (Instant Sync to TV)</span>
-            <span class="badge">Real-Time Sync</span>
+            <span class="card-title"><span class="step-num">2</span> Screen Orientation, Video Orientation &amp; App Controls</span>
+            <span class="badge">Instant Sync to TV</span>
           </div>
 
           <div class="form-grid-2">
             <div>
-              <label for="orientationSelect">Default Screen Orientation (All TVs)</label>
-              <select id="orientationSelect" onchange="publishAllChanges()">
+              <label for="orientationSelect">Screen Orientation (All Paired TVs)</label>
+              <select id="orientationSelect" onchange="applyGlobalOrientationNow()">
                 <option value="LANDSCAPE">Landscape (0&deg; Horizontal 16:9 TV)</option>
                 <option value="PORTRAIT">Portrait (90&deg; Vertical Standee / Totem)</option>
                 <option value="REVERSE_LANDSCAPE">Reverse Landscape (180&deg; Inverted)</option>
@@ -840,8 +888,8 @@
             </div>
 
             <div>
-              <label for="videoOrientationSelect">Default Video Orientation (Player Stream Rotation)</label>
-              <select id="videoOrientationSelect" onchange="publishAllChanges()">
+              <label for="videoOrientationSelect">Video Orientation (Player Stream Rotation)</label>
+              <select id="videoOrientationSelect" onchange="applyGlobalOrientationNow()">
                 <option value="0">0&deg; Normal (Landscape Video)</option>
                 <option value="90">90&deg; Rotate Right (Portrait CW Video)</option>
                 <option value="180">180&deg; Upside-Down (Inverted Video)</option>
@@ -851,8 +899,8 @@
           </div>
 
           <div>
-            <label for="scaleModeSelect">Default Video Aspect Scale Mode</label>
-            <select id="scaleModeSelect" onchange="publishAllChanges()">
+            <label for="scaleModeSelect">Video Aspect Scale Mode</label>
+            <select id="scaleModeSelect" onchange="applyGlobalOrientationNow()">
               <option value="ZOOM">ZOOM &mdash; Fill Screen &amp; Crop (No Black Bars)</option>
               <option value="FIT">FIT &mdash; Fit Center (Preserve Aspect Ratio)</option>
               <option value="FILL">FILL &mdash; Stretch 100%</option>
@@ -863,10 +911,6 @@
           <label>Android Player Live Controls (Changes apply automatically on Android App)</label>
           <div class="toggle-grid">
             <label class="toggle-box" style="margin-bottom:0; color:#fff;">
-              <span>Show News Ticker</span>
-              <input type="checkbox" id="tickerEnabledCheck" checked onchange="publishAllChanges()" />
-            </label>
-            <label class="toggle-box" style="margin-bottom:0; color:#fff;">
               <span>Mute TV Audio</span>
               <input type="checkbox" id="muteAudioCheck" onchange="publishAllChanges()" />
             </label>
@@ -876,14 +920,12 @@
             </label>
           </div>
 
-          <label for="tickerInput">Bottom Crawling News &amp; Promo Ticker Text</label>
-          <input type="text" id="tickerInput" placeholder="Enter scrolling ticker message..." onchange="publishAllChanges()" />
-
-          <label for="vastInput">Google IMA VAST Ad Tag URL (Pre-Roll / Mid-Roll)</label>
+          <label for="vastInput">Google IMA VAST Ad Tag URL (Optional Pre-Roll / Mid-Roll)</label>
           <input type="text" id="vastInput" placeholder="https://pubads.g.doubleclick.net/..." onchange="publishAllChanges()" />
 
-          <div style="display:flex; justify-content:flex-end;">
-            <button class="btn btn-cyan" onclick="publishAllChanges()">Save &amp; Sync All Settings to Android App</button>
+          <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-emerald" onclick="applyGlobalOrientationNow()">Apply Orientation to All TVs Now</button>
+            <button class="btn btn-cyan" onclick="publishAllChanges()">Save &amp; Sync All Settings</button>
           </div>
         </div>
 
@@ -892,18 +934,21 @@
       <!-- Right Column -->
       <div class="col-stack">
 
-        <!-- Live Signage Monitor Preview (Auto-Plays Pushed Videos!) -->
+        <!-- Live Signage Monitor Preview (Plays Real Uploaded Video & Orientation!) -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><span class="step-num">&#9654;</span> Live Broadcast Monitor (Auto-Plays on Push)</span>
+            <span class="card-title"><span class="step-num">&#9654;</span> Live Broadcast Monitor (Real Video Preview)</span>
             <span class="badge badge-offline" id="liveMonitorBadge">Playing Live</span>
           </div>
-          <div class="monitor-player-wrap">
-            <video id="liveMonitorVideo" controls autoplay muted playsinline loop></video>
+          <div class="monitor-player-wrap" id="monitorPlayerWrap">
+            <video id="liveMonitorVideo" controls autoplay muted playsinline></video>
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
             <div style="font-size:12px; color:#fff; font-weight:700;" id="liveMonitorTitle">Loading active broadcast...</div>
-            <button class="btn btn-outline btn-sm" onclick="promptOfflinePopupForCurrent()">&#11015; Download Current for Offline</button>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-emerald btn-sm" onclick="playSelectedVideosNow()">&#9654; Play on TVs</button>
+              <button class="btn btn-outline btn-sm" onclick="promptOfflinePopupForCurrent()">&#11015; Save Offline</button>
+            </div>
           </div>
         </div>
 
@@ -942,12 +987,12 @@
             <button class="btn btn-outline btn-sm" onclick="loadDashboardData()">&#8635; Refresh Status</button>
           </div>
           <div class="remote-btn-grid">
+            <button class="btn btn-emerald" onclick="playSelectedVideosNow()">&#9654; Play Selected on All TVs</button>
             <button class="btn btn-blue" onclick="sendRemoteCommand('pushSync')">Force Cloud Sync (All)</button>
             <button class="btn btn-outline" onclick="sendRemoteCommand('setLandscape')">All Screen: Landscape</button>
             <button class="btn btn-outline" onclick="sendRemoteCommand('setPortrait')">All Screen: Portrait</button>
             <button class="btn btn-outline" onclick="sendRemoteCommand('setVideoOrientation:0')">All Video: 0&deg; Normal</button>
             <button class="btn btn-outline" onclick="sendRemoteCommand('setVideoOrientation:90')">All Video: 90&deg; Portrait</button>
-            <button class="btn btn-coral" onclick="sendRemoteCommand('clearCache')">Purge TV Cache</button>
           </div>
 
           <div id="devicesListContainer"></div>
@@ -966,7 +1011,7 @@
     </div>
   </main>
 
-  <!-- "Download for Offline" Popup Modal (Triggered automatically on new video upload!) -->
+  <!-- "Download for Offline" Popup Modal -->
   <div class="modal-backdrop" id="offlinePopupModal">
     <div class="modal-card">
       <div style="width:56px; height:56px; border-radius:50%; background:rgba(0,230,118,0.15); border:1.5px solid var(--emerald); display:inline-flex; align-items:center; justify-content:center; font-size:26px; color:var(--emerald); margin-bottom:14px;">
@@ -1006,22 +1051,28 @@
       orientation: 'LANDSCAPE',
       videoOrientation: 0,
       scaleMode: 'ZOOM',
-      tickerEnabled: true,
+      tickerEnabled: false,
       isMuted: false,
       kioskLocked: true,
       autoBootEnabled: true,
       lastPushedVideoId: null,
       lastPushTimestamp: 0,
-      tickerText: '',
+      activeVideoIds: null,
       ads: [],
       videos: []
     };
 
     let currentUploadMode = 'LINK';
-    let selectedFileDataUrl = null;
+    let selectedRawFile = null;
+    let selectedBlobUrl = null;
     let selectedFileName = '';
     let pendingOfflineVideo = null;
     let currentMonitorUrl = '';
+    let localBlobUrls = {};
+    let selectedVideoIdsSet = new Set();
+    let initializedSelection = false;
+    let monitorPlaylistQueue = [];
+    let monitorQueueIndex = 0;
     let offlineCachedIds = JSON.parse(localStorage.getItem('signage_offline_ids') || '{}');
 
     function showToast(msg) {
@@ -1029,7 +1080,7 @@
       el.textContent = msg;
       el.style.display = 'block';
       clearTimeout(window.__toastTimer);
-      window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+      window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3800);
     }
 
     function setUploadMode(mode) {
@@ -1043,22 +1094,44 @@
     function handleVideoFileSelected(event) {
       const file = event.target.files && event.target.files[0];
       if (!file) return;
+      selectedRawFile = file;
       selectedFileName = file.name;
+      if (selectedBlobUrl) {
+        try { URL.revokeObjectURL(selectedBlobUrl); } catch (e) {}
+      }
+      selectedBlobUrl = URL.createObjectURL(file);
+
       const titleInput = document.getElementById('newVideoTitle');
       if (!titleInput.value.trim()) {
         titleInput.value = file.name.replace(/\.[^/.]+$/, '');
       }
       const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
       const statusEl = document.getElementById('uploadFileStatusText');
-      statusEl.textContent = `Selected: ${file.name} (${sizeMb} MB) — Reading file...`;
+      statusEl.textContent = `Selected: ${file.name} (${sizeMb} MB) — Ready to Upload & Play!`;
 
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        selectedFileDataUrl = e.target.result;
-        statusEl.textContent = `Ready to Upload & Push: ${file.name} (${sizeMb} MB)`;
-        showToast(`Video file "${file.name}" ready! Click "Upload / Add & Push to Play Now"`);
+      // Immediately preview the user's real selected video in the Live Broadcast Monitor!
+      const videoEl = document.getElementById('liveMonitorVideo');
+      if (videoEl) {
+        currentMonitorUrl = selectedBlobUrl;
+        videoEl.src = selectedBlobUrl;
+        videoEl.loop = true;
+        videoEl.play().catch(() => {});
+        document.getElementById('liveMonitorTitle').textContent =
+          `Previewing Selected File: ${file.name} (${sizeMb} MB)`;
+        document.getElementById('liveMonitorBadge').textContent = 'Local File Preview';
+      }
+
+      // Auto-detect video duration if possible
+      const tempVid = document.createElement('video');
+      tempVid.preload = 'metadata';
+      tempVid.onloadedmetadata = function() {
+        if (tempVid.duration && isFinite(tempVid.duration) && tempVid.duration > 1) {
+          document.getElementById('newVideoDuration').value = Math.round(tempVid.duration);
+        }
       };
-      reader.readAsDataURL(file);
+      tempVid.src = selectedBlobUrl;
+
+      showToast(`Real video "${file.name}" loaded in preview! Click "Upload / Add & Play on TVs Now"`);
     }
 
     function fillPreset(title, url, duration) {
@@ -1066,7 +1139,7 @@
       document.getElementById('newVideoTitle').value = title;
       document.getElementById('newVideoUrl').value = url;
       document.getElementById('newVideoDuration').value = duration;
-      showToast('Sample filled! Click "Upload / Add & Push to Play Now"');
+      showToast('Sample filled! Click "Upload / Add & Play on TVs Now"');
     }
 
     function copyPayloadJson() {
@@ -1075,6 +1148,30 @@
         showToast('Copied /api/playlist JSON to clipboard!');
       });
     }
+
+    // Setup Live Monitor continuous multi-video loop
+    window.addEventListener('DOMContentLoaded', () => {
+      const videoEl = document.getElementById('liveMonitorVideo');
+      if (videoEl) {
+        videoEl.addEventListener('ended', () => {
+          if (monitorPlaylistQueue.length > 1) {
+            monitorQueueIndex = (monitorQueueIndex + 1) % monitorPlaylistQueue.length;
+            const nextVid = monitorPlaylistQueue[monitorQueueIndex];
+            if (nextVid) {
+              const nextSrc = localBlobUrls[nextVid.id] || nextVid.url;
+              currentMonitorUrl = nextSrc;
+              videoEl.src = nextSrc;
+              videoEl.play().catch(() => {});
+              document.getElementById('liveMonitorTitle').textContent =
+                `Now Playing (${monitorQueueIndex + 1}/${monitorPlaylistQueue.length}): ${nextVid.title || nextVid.id}`;
+            }
+          } else {
+            videoEl.currentTime = 0;
+            videoEl.play().catch(() => {});
+          }
+        });
+      }
+    });
 
     async function loadDashboardData() {
       try {
@@ -1093,36 +1190,117 @@
       }
     }
 
+    function toggleSelectAllVideos(checked) {
+      const videos = currentState.videos || [];
+      if (checked) {
+        videos.forEach(v => selectedVideoIdsSet.add(v.id));
+      } else {
+        selectedVideoIdsSet.clear();
+      }
+      renderPlaylist(currentState);
+    }
+
+    function toggleVideoSelection(videoId, checked) {
+      if (checked) {
+        selectedVideoIdsSet.add(videoId);
+      } else {
+        selectedVideoIdsSet.delete(videoId);
+      }
+      updateSelectedBadge();
+    }
+
+    function updateSelectedBadge() {
+      const total = (currentState.videos || []).length;
+      const count = selectedVideoIdsSet.size;
+      const badge = document.getElementById('selectedCountBadge');
+      const selectAllEl = document.getElementById('selectAllVideosCheck');
+      if (badge) {
+        badge.textContent = count === total ? `All ${total} Selected` : `${count} of ${total} Selected`;
+      }
+      if (selectAllEl) {
+        selectAllEl.checked = total > 0 && count === total;
+      }
+    }
+
+    function applyPreviewOrientationTransform(screenOrient, videoDeg) {
+      const videoEl = document.getElementById('liveMonitorVideo');
+      if (!videoEl) return;
+      let screenFallback = 0;
+      if (screenOrient === 'PORTRAIT') screenFallback = 90;
+      else if (screenOrient === 'REVERSE_LANDSCAPE') screenFallback = 180;
+      else if (screenOrient === 'REVERSE_PORTRAIT') screenFallback = 270;
+      const totalDeg = ((Number(videoDeg) || 0) + screenFallback) % 360;
+      const scale = (totalDeg === 90 || totalDeg === 270) ? 0.56 : 1;
+      videoEl.style.transform = totalDeg ? `rotate(${totalDeg}deg) scale(${scale})` : 'none';
+    }
+
     function renderPlaylist(playlist) {
       const vidDeg = Number(playlist.videoOrientation) || 0;
+      const screenOrient = playlist.orientation || 'LANDSCAPE';
+      const videos = playlist.videos || [];
+
+      if (!initializedSelection && videos.length > 0) {
+        videos.forEach(v => selectedVideoIdsSet.add(v.id));
+        initializedSelection = true;
+      } else {
+        // Remove deleted IDs
+        Array.from(selectedVideoIdsSet).forEach(id => {
+          if (!videos.some(v => v.id === id)) selectedVideoIdsSet.delete(id);
+        });
+      }
+      updateSelectedBadge();
+
       document.getElementById('statVersion').textContent = 'v' + (playlist.version || 1);
-      document.getElementById('statVideos').textContent = (playlist.videos || []).length;
-      document.getElementById('statOrientation').textContent = playlist.orientation || 'LANDSCAPE';
+      document.getElementById('statVideos').textContent = videos.length;
+      document.getElementById('statOrientation').textContent = screenOrient;
       document.getElementById('statScaleSub').textContent =
         `Video: ${vidDeg}° • ${playlist.scaleMode || 'ZOOM'}`;
-      document.getElementById('videoCountBadge').textContent = (playlist.videos || []).length + ' Videos';
+      document.getElementById('videoCountBadge').textContent = videos.length + ' Videos';
 
-      document.getElementById('orientationSelect').value = playlist.orientation || 'LANDSCAPE';
+      if (document.activeElement !== document.getElementById('orientationSelect')) {
+        document.getElementById('orientationSelect').value = screenOrient;
+      }
       const vidOrientEl = document.getElementById('videoOrientationSelect');
-      if (vidOrientEl) vidOrientEl.value = String(vidDeg);
-      document.getElementById('scaleModeSelect').value = playlist.scaleMode || 'ZOOM';
-      document.getElementById('tickerEnabledCheck').checked = playlist.tickerEnabled !== false;
+      if (vidOrientEl && document.activeElement !== vidOrientEl) {
+        vidOrientEl.value = String(vidDeg);
+      }
+      if (document.activeElement !== document.getElementById('scaleModeSelect')) {
+        document.getElementById('scaleModeSelect').value = playlist.scaleMode || 'ZOOM';
+      }
       document.getElementById('muteAudioCheck').checked = Boolean(playlist.isMuted);
       document.getElementById('kioskLockedCheck').checked = playlist.kioskLocked !== false;
-      document.getElementById('tickerInput').value = playlist.tickerText || '';
-      document.getElementById('vastInput').value =
-        (playlist.ads && playlist.ads[0] && playlist.ads[0].vastTag) || '';
+      if (document.activeElement !== document.getElementById('vastInput')) {
+        document.getElementById('vastInput').value =
+          (playlist.ads && playlist.ads[0] && playlist.ads[0].vastTag) || '';
+      }
 
-      const videos = playlist.videos || [];
-      const activeVid = videos.find(v => v.id === playlist.lastPushedVideoId) || videos[0];
-      if (activeVid) {
+      applyPreviewOrientationTransform(screenOrient, vidDeg);
+
+      // Update Live Monitor queue (unless user is currently previewing an unpushed local file selection)
+      const activeIds = Array.isArray(playlist.activeVideoIds) && playlist.activeVideoIds.length > 0
+        ? playlist.activeVideoIds
+        : null;
+      monitorPlaylistQueue = activeIds
+        ? activeIds.map(id => videos.find(v => v.id === id)).filter(Boolean)
+        : videos;
+
+      const activeVid =
+        monitorPlaylistQueue.find(v => v.id === playlist.lastPushedVideoId) ||
+        videos.find(v => v.id === playlist.lastPushedVideoId) ||
+        monitorPlaylistQueue[0] ||
+        videos[0];
+
+      if (activeVid && (!selectedBlobUrl || currentMonitorUrl !== selectedBlobUrl)) {
         const videoEl = document.getElementById('liveMonitorVideo');
+        const preferredSrc = localBlobUrls[activeVid.id] || activeVid.url;
         document.getElementById('liveMonitorTitle').textContent =
-          `Now Playing: ${activeVid.title || activeVid.id} (Screen: ${playlist.orientation || 'LANDSCAPE'} | Video: ${vidDeg}°)`;
-        videoEl.style.transform = vidDeg ? `rotate(${vidDeg}deg)` : 'none';
-        if (currentMonitorUrl !== activeVid.url) {
-          currentMonitorUrl = activeVid.url;
-          videoEl.src = activeVid.url;
+          `Now Playing: ${activeVid.title || activeVid.id} (SCR: ${screenOrient} | VID: ${vidDeg}°)`;
+        document.getElementById('liveMonitorBadge').textContent =
+          monitorPlaylistQueue.length > 1 ? `Looping ${monitorPlaylistQueue.length} Videos` : 'Playing Live';
+        if (currentMonitorUrl !== preferredSrc) {
+          currentMonitorUrl = preferredSrc;
+          videoEl.src = preferredSrc;
+          videoEl.loop = monitorPlaylistQueue.length <= 1;
           videoEl.play().catch(() => {});
         }
       }
@@ -1132,22 +1310,33 @@
 
       videos.forEach((v, idx) => {
         const isPushed = playlist.lastPushedVideoId === v.id || (!playlist.lastPushedVideoId && idx === 0);
+        const isInActiveQueue = !activeIds || activeIds.includes(v.id);
         const isOffline = Boolean(offlineCachedIds[v.id]);
+        const isChecked = selectedVideoIdsSet.has(v.id);
         const div = document.createElement('div');
         div.className = 'video-item' + (isPushed ? ' playing-now' : '');
         div.innerHTML = `
-          <div class="video-meta">
-            <h4>
-              <span>#${idx + 1} &mdash; ${v.title || v.id}</span>
-              <span class="badge badge-duration">${v.duration || 30}s</span>
-              ${isPushed ? '<span class="badge badge-offline">&#9654; Auto-Playing</span>' : ''}
-              ${isOffline ? '<span class="badge badge-offline">&#10004; Offline Ready</span>' : ''}
-              ${v.adTagUrl ? '<span class="badge">VAST Ad</span>' : ''}
-            </h4>
-            <div class="video-url-line" title="${v.url}">${v.url}</div>
+          <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
+            <input
+              type="checkbox"
+              ${isChecked ? 'checked' : ''}
+              onchange="toggleVideoSelection('${v.id}', this.checked)"
+              style="width:18px; height:18px; cursor:pointer; flex-shrink:0;"
+              title="Select video for Multi-Video Play"
+            />
+            <div class="video-meta">
+              <h4>
+                <span>#${idx + 1} &mdash; ${v.title || v.id}</span>
+                <span class="badge badge-duration">${v.duration || 30}s</span>
+                ${isPushed ? '<span class="badge badge-offline">&#9654; Playing Now</span>' : ''}
+                ${isInActiveQueue && activeIds ? '<span class="badge">In Active Loop</span>' : ''}
+                ${isOffline ? '<span class="badge badge-offline">&#10004; Offline Ready</span>' : ''}
+              </h4>
+              <div class="video-url-line" title="${v.url}">${v.url}</div>
+            </div>
           </div>
           <div class="video-actions">
-            <button class="btn btn-emerald btn-sm" onclick="pushPlayVideoNow('${v.id}')" title="Push & Play Immediately on All TVs">&#9654; Push &amp; Play</button>
+            <button class="btn btn-emerald btn-sm" onclick="pushPlayVideoNow('${v.id}')" title="Force Play Immediately on Target TV(s)">&#9654; Play Now</button>
             <button class="btn btn-outline btn-sm" onclick="openOfflinePopupForVideo('${v.id}')" title="Download for Offline">&#11015; Offline</button>
             <button class="btn btn-coral btn-sm" onclick="removeVideoItem('${v.id}')">Delete</button>
           </div>
@@ -1159,14 +1348,25 @@
     }
 
     function renderDevices(devices, approvedCodes = {}) {
-      // Only show devices that were genuinely paired via an approved 6-digit code (Zero Fake Pairing)
       const verifiedDevices = (devices || []).filter(
         d => d && d.paired === true && d.pairingCode && approvedCodes[d.pairingCode]
       );
 
       document.getElementById('statDevices').textContent = verifiedDevices.length;
 
-      // Show approved 6-digit codes waiting or active
+      // Update Target Device Selector dropdown in Section 1
+      const targetSelect = document.getElementById('playTargetDeviceSelect');
+      if (targetSelect) {
+        const prevVal = targetSelect.value || '*';
+        targetSelect.innerHTML = `<option value="*">All Paired TVs (${verifiedDevices.length} Connected)</option>` +
+          verifiedDevices.map(d =>
+            `<option value="${d.deviceId}">${d.deviceName || d.deviceId} (Code: ${d.pairingCode})</option>`
+          ).join('');
+        if (prevVal === '*' || verifiedDevices.some(d => d.deviceId === prevVal)) {
+          targetSelect.value = prevVal;
+        }
+      }
+
       const codesBox = document.getElementById('approvedCodesListContainer');
       const codeEntries = Object.values(approvedCodes || {});
       if (codesBox) {
@@ -1193,7 +1393,7 @@
           <div class="device-card">
             <div style="font-size:13px; font-weight:700; color:var(--amber);">No Paired Android TV Yet (Zero Fake Pairing)</div>
             <div style="font-size:11.5px; color:var(--muted); margin-top:4px;">
-              Open the Android TV app to view its <strong>6-Digit Device Pair Code</strong>, enter that code in <strong>Section 3</strong> above, and click <strong>Pair TV Now</strong>. Live background sync runs every <strong>5 seconds</strong>!
+              Open the Android TV app to view its <strong>6-Digit Device Pair Code</strong>, enter that code in <strong>Section 3</strong> above, and click <strong>Pair TV Now</strong>. Live background sync runs every <strong>2.5 seconds</strong>!
             </div>
           </div>
         `;
@@ -1224,8 +1424,9 @@
                   SCR: ${devScreenOrient} &bull; VID: ${devVideoOrient}&deg;
                 </span>
               </strong>
-              <div style="display:flex; align-items:center; gap:6px;">
-                <span class="badge badge-offline">&#10004; PAIRED (${isOnline ? '5s LIVE' : 'IDLE'})</span>
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <button class="btn btn-emerald btn-sm" onclick="playSelectedOnSpecificDevice('${d.deviceId}')">&#9654; Play Selected on This TV</button>
+                <span class="badge badge-offline">&#10004; PAIRED (${isOnline ? 'LIVE' : 'IDLE'})</span>
                 <button class="btn btn-coral btn-sm" onclick="unpairDeviceByCode('${d.pairingCode || ''}', '${d.deviceId}')">Unpair</button>
               </div>
             </div>
@@ -1278,6 +1479,30 @@
       }).join('');
     }
 
+    async function applyGlobalOrientationNow() {
+      const screenOrientation = document.getElementById('orientationSelect').value;
+      const videoOrientEl = document.getElementById('videoOrientationSelect');
+      const videoOrientation = videoOrientEl ? Number(videoOrientEl.value) || 0 : 0;
+      const scaleMode = document.getElementById('scaleModeSelect').value;
+
+      applyPreviewOrientationTransform(screenOrientation, videoOrientation);
+
+      await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: '*',
+          action: 'setDeviceOrientation',
+          screenOrientation,
+          videoOrientation,
+          scaleMode
+        })
+      });
+
+      await publishAllChanges();
+      showToast(`Applied Screen (${screenOrientation}) & Video (${videoOrientation}°) to All Paired TVs!`);
+    }
+
     async function updateSingleDeviceOrientation(deviceId, safeId) {
       const screenEl = document.getElementById('devScreenOrient_' + safeId);
       const videoEl = document.getElementById('devVideoOrient_' + safeId);
@@ -1309,10 +1534,8 @@
       const videoOrientEl = document.getElementById('videoOrientationSelect');
       const videoOrientation = videoOrientEl ? Number(videoOrientEl.value) || 0 : 0;
       const scaleMode = document.getElementById('scaleModeSelect').value;
-      const tickerEnabled = document.getElementById('tickerEnabledCheck').checked;
       const isMuted = document.getElementById('muteAudioCheck').checked;
       const kioskLocked = document.getElementById('kioskLockedCheck').checked;
-      const tickerText = document.getElementById('tickerInput').value;
       const vastTag = document.getElementById('vastInput').value;
 
       const payload = {
@@ -1320,10 +1543,9 @@
         orientation,
         videoOrientation,
         scaleMode,
-        tickerEnabled,
+        tickerEnabled: false,
         isMuted,
         kioskLocked,
-        tickerText,
         vastTag,
         ...extraFields
       };
@@ -1341,46 +1563,118 @@
       }
     }
 
+    // Helper: Convert ArrayBuffer to Base64 string for chunked upload
+    function arrayBufferToBase64(buffer) {
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
+    }
+
+    // Uploads a real video file via Browser Direct CDN + Chunked /api/upload (supports files > 4 MB!)
+    async function uploadRealVideoFile(file, newVideoId, onProgress) {
+      // 1. Try direct CORS upload from browser to tmpfiles.org (supports up to 100 MB directly)
+      try {
+        onProgress('Uploading video directly to Cloud Stream Server...');
+        const fd = new FormData();
+        fd.append('file', file, file.name || `${newVideoId}.mp4`);
+        const directRes = await fetch('https://tmpfiles.org/api/v1/upload', {
+          method: 'POST',
+          body: fd
+        });
+        if (directRes.ok) {
+          const directJson = await directRes.json();
+          const pageUrl = directJson && directJson.data && directJson.data.url;
+          if (pageUrl) {
+            const directMp4Url = String(pageUrl)
+              .replace(/^http:\/\//i, 'https://')
+              .replace('https://tmpfiles.org/', 'https://tmpfiles.org/dl/');
+            // Also register on our backend if small enough
+            return directMp4Url;
+          }
+        }
+      } catch (e) {
+        // Fallback to chunked server upload below
+      }
+
+      // 2. Chunked upload (1.5 MB per chunk) to /api/upload so Vercel 4.5 MB limit is never exceeded
+      const CHUNK_SIZE = 1.5 * 1024 * 1024;
+      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+      let finalServerUrl = '';
+
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        const slice = file.slice(start, end);
+        const arrayBuf = await slice.arrayBuffer();
+        const chunkBase64 = arrayBufferToBase64(arrayBuf);
+        const pct = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+        onProgress(`Uploading Video Chunk ${chunkIndex + 1}/${totalChunks} (${pct}%)...`);
+
+        const upRes = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'uploadChunk',
+            id: newVideoId,
+            filename: file.name || `${newVideoId}.mp4`,
+            chunkIndex,
+            totalChunks,
+            chunkBase64
+          })
+        });
+        const upData = await upRes.json();
+        if (!upRes.ok || (!upData.success && !upData.partial)) {
+          throw new Error((upData && upData.error) || `Upload chunk ${chunkIndex + 1} failed`);
+        }
+        if (upData.url) {
+          finalServerUrl = upData.url;
+        }
+      }
+
+      if (!finalServerUrl) {
+        throw new Error('Could not obtain uploaded stream URL');
+      }
+      return finalServerUrl;
+    }
+
     async function addVideoItem(pushImmediately = true) {
       const titleInput = document.getElementById('newVideoTitle').value.trim();
       const duration = Number(document.getElementById('newVideoDuration').value) || 30;
       const enableVast = document.getElementById('newVideoVast').checked;
       const vastTag = document.getElementById('vastInput').value.trim();
       const btn = document.getElementById('addAndPushBtn');
+      const statusEl = document.getElementById('uploadFileStatusText');
 
       let finalUrl = '';
       const newVideoId = 'vid_' + Date.now();
       const title = titleInput || (selectedFileName ? selectedFileName.replace(/\.[^/.]+$/, '') : 'Signage Broadcast');
 
       if (currentUploadMode === 'FILE') {
-        if (!selectedFileDataUrl) {
-          showToast('Please select a video file (.mp4) to upload first!');
+        if (!selectedRawFile) {
+          showToast('Please select a video file (.mp4) from your device first!');
           return;
         }
         try {
           btn.disabled = true;
-          btn.textContent = 'Uploading Video & Pushing...';
-          const upRes = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: newVideoId,
-              filename: selectedFileName,
-              base64Data: selectedFileDataUrl
-            })
+          finalUrl = await uploadRealVideoFile(selectedRawFile, newVideoId, (msg) => {
+            btn.textContent = msg;
+            if (statusEl) statusEl.textContent = msg;
           });
-          const upData = await upRes.json();
-          if (upData && upData.url) {
-            finalUrl = upData.url;
-          } else {
-            throw new Error(upData.error || 'Upload error');
+          if (selectedBlobUrl) {
+            localBlobUrls[newVideoId] = selectedBlobUrl;
           }
         } catch (err) {
-          showToast('Upload notice: using direct stream fallback');
-          finalUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
+          btn.disabled = false;
+          btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
+          showToast('Upload error: ' + (err.message || 'Please check connection or try smaller MP4'));
+          return;
         } finally {
           btn.disabled = false;
-          btn.innerHTML = '&#128640; Upload / Add &amp; Push to Play Now';
+          btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
         }
       } else {
         finalUrl = document.getElementById('newVideoUrl').value.trim();
@@ -1401,26 +1695,121 @@
 
       currentState.videos = currentState.videos || [];
       currentState.videos.push(newVideoObj);
+      selectedVideoIdsSet.add(newVideoId);
 
       document.getElementById('newVideoTitle').value = '';
       document.getElementById('newVideoUrl').value = '';
-      selectedFileDataUrl = null;
+      selectedRawFile = null;
       selectedFileName = '';
-      const statusEl = document.getElementById('uploadFileStatusText');
       if (statusEl) statusEl.textContent = 'Click here to choose a video file to upload';
 
       await publishAllChanges({
-        lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId
+        lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId,
+        activeVideoIds: null
       });
 
-      // Immediately open the "Download for Offline" popup for the newly uploaded video!
+      if (pushImmediately) {
+        const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+        await fetch('/api/devices/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId: targetDevice,
+            action: 'playVideosNow',
+            videoIds: currentState.videos.map(v => v.id),
+            startVideoId: newVideoId
+          })
+        });
+      }
+
       openOfflinePopup(newVideoObj);
     }
 
-    async function pushPlayVideoNow(videoId) {
-      await sendRemoteCommand('playVideo:' + videoId);
+    async function playSelectedVideosNow() {
+      const videos = currentState.videos || [];
+      const selectedIds = videos.map(v => v.id).filter(id => selectedVideoIdsSet.has(id));
+      if (selectedIds.length === 0) {
+        showToast('Please select at least 1 video checkbox to play!');
+        return;
+      }
+      const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+      const res = await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: targetDevice,
+          action: 'playVideosNow',
+          videoIds: selectedIds,
+          startVideoId: selectedIds[0]
+        })
+      });
+      const data = await res.json();
+      selectedBlobUrl = null;
       await loadDashboardData();
-      showToast('Pushed video to play immediately on all connected screens!');
+      showToast(data.message || `Playing ${selectedIds.length} selected video(s) immediately!`);
+    }
+
+    async function playAllVideosNow() {
+      const videos = currentState.videos || [];
+      if (videos.length === 0) return;
+      videos.forEach(v => selectedVideoIdsSet.add(v.id));
+      const allIds = videos.map(v => v.id);
+      const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+      const res = await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: targetDevice,
+          action: 'playVideosNow',
+          videoIds: allIds,
+          startVideoId: allIds[0]
+        })
+      });
+      const data = await res.json();
+      selectedBlobUrl = null;
+      await loadDashboardData();
+      showToast(data.message || `Playing all ${allIds.length} videos in loop immediately!`);
+    }
+
+    async function playSelectedOnSpecificDevice(deviceId) {
+      const videos = currentState.videos || [];
+      const selectedIds = videos.map(v => v.id).filter(id => selectedVideoIdsSet.has(id));
+      const effectiveIds = selectedIds.length > 0 ? selectedIds : videos.map(v => v.id);
+      const res = await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId,
+          action: 'playVideosNow',
+          videoIds: effectiveIds,
+          startVideoId: effectiveIds[0]
+        })
+      });
+      const data = await res.json();
+      await loadDashboardData();
+      showToast(data.message || `Playing ${effectiveIds.length} video(s) immediately on ${deviceId}!`);
+    }
+
+    async function pushPlayVideoNow(videoId) {
+      const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+      const videos = currentState.videos || [];
+      const selectedIds = videos.map(v => v.id).filter(id => selectedVideoIdsSet.has(id));
+      const queueIds = selectedIds.includes(videoId) ? selectedIds : [videoId, ...selectedIds];
+
+      const res = await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: targetDevice,
+          action: 'playVideosNow',
+          videoIds: queueIds.length > 0 ? queueIds : [videoId],
+          startVideoId: videoId
+        })
+      });
+      const data = await res.json();
+      selectedBlobUrl = null;
+      await loadDashboardData();
+      showToast(data.message || 'Playing video immediately on target screen(s)!');
     }
 
     function openOfflinePopupForVideo(videoId) {
@@ -1454,14 +1843,12 @@
       progressBox.textContent = 'Caching video for offline playback on TV & Browser...';
 
       try {
-        // 1. Trigger offline download on all connected Android TVs
         await fetch('/api/devices/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceId: '*', action: 'downloadOffline:' + vid.id })
         });
 
-        // 2. Also cache in browser Cache Storage for offline web playback
         if ('caches' in window) {
           const cache = await caches.open('signage-offline-videos-v1');
           await cache.add(vid.url).catch(() => {});
@@ -1491,6 +1878,7 @@
         return;
       }
       currentState.videos = currentState.videos.filter(v => v.id !== id);
+      selectedVideoIdsSet.delete(id);
       await publishAllChanges();
     }
 
@@ -1507,7 +1895,7 @@
         body: JSON.stringify({ action: 'approveCode', pairingCode: code, deviceName })
       });
       document.getElementById('pairCodeInput').value = '';
-      showToast('6-Digit TV Code ' + code + ' Approved! Android TV will pair within 5 seconds.');
+      showToast('6-Digit TV Code ' + code + ' Approved! Android TV will pair within 2.5 seconds.');
       loadDashboardData();
     }
 
@@ -1522,10 +1910,11 @@
     }
 
     async function sendRemoteCommand(action) {
+      const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
       const res = await fetch('/api/devices/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: '*', action })
+        body: JSON.stringify({ deviceId: targetDevice, action })
       });
       const data = await res.json();
       showToast(data.message || ('Command sent: ' + action));
@@ -1533,7 +1922,7 @@
     }
 
     loadDashboardData();
-    setInterval(loadDashboardData, 5000);
+    setInterval(loadDashboardData, 3500);
   </script>
 </body>
 </html>

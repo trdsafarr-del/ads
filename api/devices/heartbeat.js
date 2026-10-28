@@ -59,19 +59,19 @@ module.exports = (req, res) => {
         appVersion: appVersion || '1.0',
         screenOrientation:
           (existing && existing.screenOrientation) ||
-          screenOrientation ||
           state.playlist.orientation ||
+          screenOrientation ||
           'LANDSCAPE',
         videoOrientation:
           existing && existing.videoOrientation !== undefined && existing.videoOrientation !== null
             ? Number(existing.videoOrientation)
-            : videoOrientation !== undefined && videoOrientation !== null
-            ? Number(videoOrientation)
-            : Number(state.playlist.videoOrientation) || 0,
+            : state.playlist.videoOrientation !== undefined && state.playlist.videoOrientation !== null
+            ? Number(state.playlist.videoOrientation)
+            : Number(videoOrientation) || 0,
         scaleMode:
           (existing && existing.scaleMode) ||
-          scaleMode ||
           state.playlist.scaleMode ||
+          scaleMode ||
           'ZOOM',
         lastSyncTime: Number(lastSyncTime) || Date.now(),
         lastSeen: Date.now(),
@@ -91,12 +91,23 @@ module.exports = (req, res) => {
 
     saveState(state);
 
+    const dev = state.devices[deviceId] || {};
+    const effectivePushTs = Math.max(
+      Number(dev.lastPushTimestamp) || 0,
+      Number(state.playlist.lastPushTimestamp) || 0
+    );
+    const effectivePushedId =
+      (Number(dev.lastPushTimestamp) || 0) >= (Number(state.playlist.lastPushTimestamp) || 0) &&
+      dev.lastPushedVideoId
+        ? dev.lastPushedVideoId
+        : state.playlist.lastPushedVideoId || null;
+
     return res.status(200).json({
       acknowledged: true,
       serverAction,
       playlistVersion: state.playlist.version || 1,
-      lastPushedVideoId: state.playlist.lastPushedVideoId || null,
-      lastPushTimestamp: state.playlist.lastPushTimestamp || 0
+      lastPushedVideoId: effectivePushedId,
+      lastPushTimestamp: effectivePushTs
     });
   }
 

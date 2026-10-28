@@ -25,7 +25,7 @@ import java.util.Collections
 data class SignageUiState(
     val isKioskLocked: Boolean = true,
     val isAutoBootEnabled: Boolean = true,
-    val isTickerEnabled: Boolean = true,
+    val isTickerEnabled: Boolean = false,
     val isPlayerMuted: Boolean = false,
     val isStartupDelayEnabled: Boolean = false,
     val isBurnInProtectionEnabled: Boolean = true,
@@ -141,11 +141,12 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Live 5-second background sync loop (runs when internet is ON):
+     * Live background sync loop (runs when internet is ON):
      * 1. Checks internet connectivity first. If offline -> Red dot (no network traffic).
-     * 2. If online -> runs every 5 seconds in background (Dispatchers.IO):
+     * 2. If online -> runs every 2.5 seconds in background (Dispatchers.IO):
      *    - Checks 6-digit pairing confirmation when unpaired.
      *    - Syncs Web Dashboard settings, playlist, offline download requests, and auto-play pushes when paired.
+     *    - When a remote Play command arrives, automatically dismisses any open panel/dialog so the video plays full-screen immediately.
      */
     private fun startRealtimeDashboardSyncLoop() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -160,8 +161,13 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
                     val result = repository.pollRealtimeDashboardSync(activePlayingVideoId)
                     val isPairedNow = pairingManager.isPaired()
 
+                    val isForcePlayTriggered = !result.pushedVideoIdToAutoPlay.isNullOrBlank()
                     val currentPopup = _uiState.value.pendingOfflinePopupVideo
-                    val nextPopup = currentPopup ?: result.newlyUploadedVideoForPopup
+                    val nextPopup = if (isForcePlayTriggered && result.newlyUploadedVideoForPopup == null) {
+                        null
+                    } else {
+                        currentPopup ?: result.newlyUploadedVideoForPopup
+                    }
                     val nextAutoPlay = result.pushedVideoIdToAutoPlay ?: _uiState.value.pushedVideoIdToAutoPlay
 
                     _uiState.value = _uiState.value.copy(
@@ -181,6 +187,9 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
                         cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
                         lastSyncStatus = localStore.getLastSyncStatus(),
                         lastSyncTimestamp = localStore.getLastSyncTimestamp(),
+                        showAdminSettingsPanel = if (isForcePlayTriggered) false else _uiState.value.showAdminSettingsPanel,
+                        showAdminPinDialog = if (isForcePlayTriggered) false else _uiState.value.showAdminPinDialog,
+                        showDiagnosticOverlay = if (isForcePlayTriggered) false else _uiState.value.showDiagnosticOverlay,
                         pendingOfflinePopupVideo = nextPopup,
                         pushedVideoIdToAutoPlay = nextAutoPlay
                     )
@@ -190,8 +199,8 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
 
-                // Live sync every 5 seconds in background
-                delay(5_000L)
+                // Live sync every 2.5 seconds in background for instant Play response
+                delay(2_500L)
             }
         }
     }
@@ -328,12 +337,19 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Pushes an existing video in the playlist to immediately start playing on all screens.
+     * Pushes an existing video in the playlist to immediately start playing on all screens,
+     * dismissing any open panels or overlays so playback is unobstructed.
      */
     fun pushPlayVideoNow(videoId: String) {
         viewModelScope.launch {
             repository.pushVideoToPlayNow(videoId)
-            _uiState.value = _uiState.value.copy(pushedVideoIdToAutoPlay = videoId)
+            _uiState.value = _uiState.value.copy(
+                pushedVideoIdToAutoPlay = videoId,
+                showAdminSettingsPanel = false,
+                showAdminPinDialog = false,
+                showDiagnosticOverlay = false,
+                pendingOfflinePopupVideo = null
+            )
         }
     }
 

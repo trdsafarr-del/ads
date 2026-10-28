@@ -90,7 +90,7 @@ class SignageLocalStore(private val context: Context) {
     }
 
     fun isTickerEnabled(): Boolean {
-        return prefs.getBoolean(KEY_TICKER_ENABLED, true)
+        return prefs.getBoolean(KEY_TICKER_ENABLED, false)
     }
 
     fun setTickerEnabled(enabled: Boolean) {
@@ -150,12 +150,12 @@ class SignageLocalStore(private val context: Context) {
     }
 
     fun isVideoOfflineDownloaded(videoId: String): Boolean {
-        val set = prefs.getStringSet(KEY_OFFLINE_DOWNLOADED_IDS, DEFAULT_BUILTIN_OFFLINE_IDS) ?: DEFAULT_BUILTIN_OFFLINE_IDS
+        val set = prefs.getStringSet(KEY_OFFLINE_DOWNLOADED_IDS, emptySet()) ?: emptySet()
         return set.contains(videoId)
     }
 
     fun markVideoOfflineDownloaded(videoId: String) {
-        val current = (prefs.getStringSet(KEY_OFFLINE_DOWNLOADED_IDS, DEFAULT_BUILTIN_OFFLINE_IDS) ?: DEFAULT_BUILTIN_OFFLINE_IDS).toMutableSet()
+        val current = (prefs.getStringSet(KEY_OFFLINE_DOWNLOADED_IDS, emptySet()) ?: emptySet()).toMutableSet()
         current.add(videoId)
         prefs.edit().putStringSet(KEY_OFFLINE_DOWNLOADED_IDS, current).apply()
     }
@@ -207,7 +207,23 @@ class SignageLocalStore(private val context: Context) {
 
     fun getLocalVideoPathIfExists(item: PlaylistItem): String? {
         val file = getLocalVideoFile(item)
-        return if (file.exists() && file.length() > 0) file.absolutePath else null
+        return if (file.exists() && file.length() > 1024L) file.absolutePath else null
+    }
+
+    fun purgeSyntheticFallbackVideos() {
+        if (prefs.getBoolean(KEY_PURGED_SYNTHETIC_V3, false)) return
+        val existingFiles = videoCacheDir.listFiles()
+        if (existingFiles != null) {
+            for (file in existingFiles) {
+                if (file.isFile && file.length() < 250_000L) {
+                    file.delete()
+                }
+            }
+        }
+        prefs.edit()
+            .putBoolean(KEY_PURGED_SYNTHETIC_V3, true)
+            .remove(KEY_OFFLINE_DOWNLOADED_IDS)
+            .apply()
     }
 
     fun cleanupUnusedVideos(activeItems: List<PlaylistItem>) {
@@ -241,6 +257,7 @@ class SignageLocalStore(private val context: Context) {
         private const val KEY_LAST_PUSH_TIMESTAMP = "last_push_timestamp"
         private const val KEY_OFFLINE_DOWNLOADED_IDS = "offline_downloaded_video_ids"
         private const val KEY_POPUP_SHOWN_IDS = "offline_popup_shown_video_ids"
+        private const val KEY_PURGED_SYNTHETIC_V3 = "purged_synthetic_v3"
 
         private val DEFAULT_BUILTIN_OFFLINE_IDS = setOf("vid_bunny", "vid_dream", "vid_blazes", "vid_bullrun")
 

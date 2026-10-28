@@ -39,7 +39,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,8 +57,8 @@ import com.example.player.SignagePlayerManager
 import com.example.player.VideoLoopView
 import com.example.ui.admin.AdminPinDialog
 import com.example.ui.admin.AdminSettingsPanel
+import com.example.ui.components.SignageAutoHideSidebar
 import com.example.ui.components.SignageHeaderBar
-import com.example.ui.components.SignageTicker
 import com.example.ui.diagnostic.DiagnosticOverlay
 import com.example.ui.pairing.DevicePairingScreen
 import com.example.ui.theme.EmeraldGreen
@@ -64,6 +66,7 @@ import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.SignageCard
 import com.example.ui.theme.SignageDarkBg
 import com.example.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
 
 @Composable
 fun SignageScreen(
@@ -83,6 +86,24 @@ fun SignageScreen(
     val isAdPlaying by playerManager.isAdPlaying.collectAsState()
     val isMuted by playerManager.isMuted.collectAsState()
 
+    var isSidebarOpen by remember { mutableStateOf(false) }
+    var sidebarInteractionTick by remember { mutableStateOf(0L) }
+
+    // Apply OS Screen Orientation immediately whenever changed from Web Dashboard or Admin Panel
+    LaunchedEffect(uiState.displayOrientation) {
+        (context as? Activity)?.let { act ->
+            com.example.ui.orientation.SignageOrientation.applyOrientation(act, uiState.displayOrientation)
+        }
+    }
+
+    // Auto-hide the left sidebar after 5 seconds of inactivity
+    LaunchedEffect(isSidebarOpen, sidebarInteractionTick) {
+        if (isSidebarOpen) {
+            delay(5_000L)
+            isSidebarOpen = false
+        }
+    }
+
     // Sync playlist changes with player only when device is paired
     LaunchedEffect(playlist, uiState.isPaired) {
         if (uiState.isPaired && playlist.items.isNotEmpty()) {
@@ -96,11 +117,15 @@ fun SignageScreen(
         }
     }
 
-    // Auto-play newly pushed video immediately when pushed from Web Dashboard or Admin Panel
+    // Immediately interrupt everything, close all overlays/sidebars, and play when a video is pushed/played from Dashboard or Admin
     LaunchedEffect(uiState.pushedVideoIdToAutoPlay) {
         val targetId = uiState.pushedVideoIdToAutoPlay
-        if (!targetId.isNullOrBlank()) {
-            playerManager.playVideoById(targetId)
+        if (!targetId.isNullOrBlank() && playlist.items.isNotEmpty()) {
+            isSidebarOpen = false
+            playerManager.forcePlayImmediately(
+                items = playlist.items,
+                startVideoId = targetId
+            )
             viewModel.onPushedVideoAutoPlayed()
         }
     }
@@ -120,6 +145,9 @@ fun SignageScreen(
     // Kiosk Mode Back Press Interceptor
     BackHandler(enabled = true) {
         when {
+            isSidebarOpen -> {
+                isSidebarOpen = false
+            }
             uiState.pendingOfflinePopupVideo != null -> {
                 viewModel.dismissOfflinePopup()
             }
@@ -135,7 +163,7 @@ fun SignageScreen(
             uiState.isKioskLocked -> {
                 Toast.makeText(
                     context,
-                    "Kiosk Active: Tap Top-Left ADMIN or Press MENU+UP+DOWN+OK for diagnostics",
+                    "Kiosk Active: Tap Top-Left Icon or Press MENU+UP+DOWN+OK for diagnostics",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -164,10 +192,11 @@ fun SignageScreen(
                 onOpenAdmin = { viewModel.onOpenAdminClicked() }
             )
         } else {
-            // 1. Full-screen Video Loop View with ExoPlayer, Google IMA Ads & Per-Device Video Orientation
+            // 1. Full-screen Video Loop View with ExoPlayer, Google IMA Ads & Per-Device Screen + Video Orientation
             VideoLoopView(
                 playerManager = playerManager,
                 scaleMode = uiState.videoScaleMode,
+                displayOrientation = uiState.displayOrientation,
                 videoOrientationDegrees = uiState.videoOrientation.degrees,
                 modifier = Modifier.fillMaxSize()
             )
@@ -201,7 +230,7 @@ fun SignageScreen(
                 )
             }
 
-            // 3. Top Signage Overlay Header Bar (Top-Left ADMIN + Top-Right Green/Red/Blue Connection Dot)
+            // 3. Minimal Top Overlay Icons (Compact Sidebar & Admin Icons on Top-Left + Compact Status Dot on Top-Right)
             SignageHeaderBar(
                 currentTitle = currentTitle,
                 currentIndex = currentMediaIndex,
@@ -215,22 +244,69 @@ fun SignageScreen(
                     val newMuted = playerManager.toggleMute()
                     viewModel.togglePlayerMute(newMuted)
                 },
-                onOpenAdmin = { viewModel.onOpenAdminClicked() },
+                onOpenAdmin = {
+                    isSidebarOpen = false
+                    viewModel.onOpenAdminClicked()
+                },
+                onToggleSidebar = {
+                    isSidebarOpen = !isSidebarOpen
+                    sidebarInteractionTick = System.currentTimeMillis()
+                },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .then(pixelShiftModifier)
             )
 
-            // 4. Bottom News Ticker (with pixel shift)
-            if (uiState.isTickerEnabled) {
-                val tickerText = playlist.tickerText ?: "★ OmniSign Digital TV Signage System Active ★"
-                SignageTicker(
-                    text = tickerText,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .then(pixelShiftModifier)
-                )
-            }
+            // 4. Auto-Hide Left Sidebar (All quick signage controls, playlist quick-play, orientation & Admin button)
+            SignageAutoHideSidebar(
+                visible = isSidebarOpen && !uiState.showAdminSettingsPanel && !uiState.showAdminPinDialog,
+                currentTitle = currentTitle,
+                currentIndex = currentMediaIndex,
+                totalItems = playlist.items.size,
+                isAdPlaying = isAdPlaying,
+                isMuted = isMuted,
+                connectionStatus = uiState.connectionStatus,
+                displayOrientation = uiState.displayOrientation,
+                videoOrientation = uiState.videoOrientation,
+                playlistItems = playlist.items,
+                currentVideoId = currentMediaId,
+                onUserInteraction = {
+                    sidebarInteractionTick = System.currentTimeMillis()
+                },
+                onCloseSidebar = {
+                    isSidebarOpen = false
+                },
+                onOpenAdminPanel = {
+                    isSidebarOpen = false
+                    viewModel.onOpenAdminClicked()
+                },
+                onToggleMute = {
+                    val newMuted = playerManager.toggleMute()
+                    viewModel.togglePlayerMute(newMuted)
+                },
+                onSkipPrevious = {
+                    playerManager.skipPrevious()
+                },
+                onTogglePlayPause = {
+                    playerManager.togglePlayPause()
+                },
+                onSkipNext = {
+                    playerManager.skipNext()
+                },
+                onSelectVideoToPlay = { videoId ->
+                    viewModel.pushPlayVideoNow(videoId)
+                },
+                onChangeDisplayOrientation = { mode ->
+                    viewModel.setDisplayOrientation(mode)
+                },
+                onChangeVideoOrientation = { vMode ->
+                    viewModel.setVideoOrientation(vMode)
+                },
+                onTriggerSync = {
+                    viewModel.triggerCloudSync()
+                },
+                modifier = Modifier.align(Alignment.CenterStart)
+            )
         }
 
         // 5. "Download for Offline" Popup (Automatically shown when a new video is uploaded/added!)

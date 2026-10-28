@@ -16,12 +16,14 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.R
+import com.example.ui.orientation.SignageOrientation
 
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoLoopView(
     playerManager: SignagePlayerManager,
     scaleMode: String = "ZOOM",
+    displayOrientation: SignageOrientation = SignageOrientation.LANDSCAPE,
     videoOrientationDegrees: Int = 0,
     modifier: Modifier = Modifier
 ) {
@@ -31,20 +33,31 @@ fun VideoLoopView(
         else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
-    val normalizedDegrees = ((videoOrientationDegrees % 360) + 360) % 360
-    val isQuarterTurn = normalizedDegrees == 90 || normalizedDegrees == 270
-
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        // On fixed-HDMI Android TVs or fixed-aspect streaming displays where the OS window stays landscape
+        // (maxWidth > maxHeight) even when PORTRAIT or REVERSE_PORTRAIT is requested, apply visual canvas rotation
+        // so selecting Screen Orientation on the Web Dashboard ALWAYS rotates the output immediately.
+        val isWindowLandscape = maxWidth >= maxHeight
+        val screenRotationFallback = when (displayOrientation) {
+            SignageOrientation.PORTRAIT -> if (isWindowLandscape) 90 else 0
+            SignageOrientation.REVERSE_PORTRAIT -> if (isWindowLandscape) 270 else 0
+            SignageOrientation.REVERSE_LANDSCAPE -> 180
+            else -> 0
+        }
+
+        val combinedDegrees = (((videoOrientationDegrees + screenRotationFallback) % 360) + 360) % 360
+        val isQuarterTurn = combinedDegrees == 90 || combinedDegrees == 270
+
         val playerModifier = if (isQuarterTurn) {
             Modifier
                 .requiredSize(width = maxHeight, height = maxWidth)
                 .graphicsLayer {
-                    rotationZ = normalizedDegrees.toFloat()
+                    rotationZ = combinedDegrees.toFloat()
                 }
-        } else if (normalizedDegrees == 180) {
+        } else if (combinedDegrees == 180) {
             Modifier
                 .fillMaxSize()
                 .graphicsLayer {
