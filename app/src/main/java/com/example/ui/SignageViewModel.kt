@@ -383,18 +383,20 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun addVideoToPlaylist(title: String, videoUrl: String, durationSeconds: Int, enableVastAd: Boolean) {
         viewModelScope.launch {
             val newItem = repository.addVideoToPlaylist(title, videoUrl, durationSeconds, enableVastAd)
-            try {
-                val safeDocId = newItem.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
-                cloudRepository.createVideo(
-                    videoId = safeDocId,
-                    title = newItem.title,
-                    videoUrl = newItem.videoUrl,
-                    durationSeconds = newItem.durationSeconds.toLong(),
-                    order = newItem.order.toLong(),
-                    videoOrientation = "AUTO",
-                    isForcedPlay = true
-                )
-            } catch (_: Exception) {}
+            if (!boundFirestoreUserId.isNullOrBlank()) {
+                try {
+                    val safeDocId = newItem.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
+                    cloudRepository.createVideo(
+                        videoId = safeDocId,
+                        title = newItem.title,
+                        videoUrl = newItem.videoUrl,
+                        durationSeconds = newItem.durationSeconds.toLong(),
+                        order = newItem.order.toLong(),
+                        videoOrientation = "AUTO",
+                        isForcedPlay = true
+                    )
+                } catch (_: Exception) {}
+            }
             _uiState.value = _uiState.value.copy(
                 pushedVideoIdToAutoPlay = newItem.id,
                 pendingOfflinePopupVideo = newItem,
@@ -430,19 +432,21 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun pushPlayVideoNow(videoId: String) {
         viewModelScope.launch {
             repository.pushVideoToPlayNow(videoId)
-            try {
-                cloudRepository.upsertBroadcastConfig(
-                    orientation = _uiState.value.displayOrientation.id,
-                    videoOrientation = when (_uiState.value.videoOrientation.degrees) {
-                        90, 270 -> "PORTRAIT"
-                        else -> "AUTO"
-                    },
-                    scaleMode = _uiState.value.videoScaleMode,
-                    pushedVideoId = videoId,
-                    pushedVideoTimestamp = System.currentTimeMillis(),
-                    version = (playlistFlow.value.version + 1).toLong()
-                )
-            } catch (_: Exception) {}
+            if (!boundFirestoreUserId.isNullOrBlank()) {
+                try {
+                    cloudRepository.upsertBroadcastConfig(
+                        orientation = _uiState.value.displayOrientation.id,
+                        videoOrientation = when (_uiState.value.videoOrientation.degrees) {
+                            90, 270 -> "PORTRAIT"
+                            else -> "AUTO"
+                        },
+                        scaleMode = _uiState.value.videoScaleMode,
+                        pushedVideoId = videoId,
+                        pushedVideoTimestamp = System.currentTimeMillis(),
+                        version = (playlistFlow.value.version + 1).toLong()
+                    )
+                } catch (_: Exception) {}
+            }
             _uiState.value = _uiState.value.copy(
                 pushedVideoIdToAutoPlay = videoId,
                 showAdminSettingsPanel = false,
@@ -504,10 +508,12 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun removeVideoFromPlaylist(videoId: String) {
         viewModelScope.launch {
             repository.removeVideoFromPlaylist(videoId)
-            try {
-                val safeDocId = videoId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
-                cloudRepository.deleteVideo(safeDocId)
-            } catch (_: Exception) {}
+            if (!boundFirestoreUserId.isNullOrBlank()) {
+                try {
+                    val safeDocId = videoId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
+                    cloudRepository.deleteVideo(safeDocId)
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -583,19 +589,21 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(displayOrientation = orientation)
         viewModelScope.launch {
             repository.pushDeviceOrientationSettings(screenOrientation = orientation.id)
-            try {
-                cloudRepository.upsertBroadcastConfig(
-                    orientation = orientation.id,
-                    videoOrientation = when (_uiState.value.videoOrientation.degrees) {
-                        90, 270 -> "PORTRAIT"
-                        else -> "AUTO"
-                    },
-                    scaleMode = _uiState.value.videoScaleMode,
-                    pushedVideoId = _uiState.value.pushedVideoIdToAutoPlay ?: "",
-                    pushedVideoTimestamp = System.currentTimeMillis(),
-                    version = (playlistFlow.value.version + 1).toLong()
-                )
-            } catch (_: Exception) {}
+            if (!boundFirestoreUserId.isNullOrBlank()) {
+                try {
+                    cloudRepository.upsertBroadcastConfig(
+                        orientation = orientation.id,
+                        videoOrientation = when (_uiState.value.videoOrientation.degrees) {
+                            90, 270 -> "PORTRAIT"
+                            else -> "AUTO"
+                        },
+                        scaleMode = _uiState.value.videoScaleMode,
+                        pushedVideoId = _uiState.value.pushedVideoIdToAutoPlay ?: "",
+                        pushedVideoTimestamp = System.currentTimeMillis(),
+                        version = (playlistFlow.value.version + 1).toLong()
+                    )
+                } catch (_: Exception) {}
+            }
         }
     }
 

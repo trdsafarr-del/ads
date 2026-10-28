@@ -1,16 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
-const STATE_FILE = path.join('/tmp', 'signage_cms_state_v4.json');
+const STATE_FILE = path.join('/tmp', 'signage_cms_state_v5.json');
 const UPLOAD_DIR = path.join('/tmp', 'signage_uploads');
+
+const FIRESTORE_PROJECT_ID = 'gen-lang-client-0563270290';
+const FIRESTORE_DATABASE_ID = 'ai-studio-android-signaget-4a0ce43d-8b5a-43d1-8423-f48d2b432ace';
+const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents`;
+const FIRESTORE_STATE_DOC_URL = `${FIRESTORE_BASE_URL}/cms_global/live_state`;
 
 try {
   if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   }
-} catch (e) {
-  // ignore in read-only environments
-}
+} catch (e) {}
 
 const SAMPLE_VAST_TAG =
   'https://pubads.g.doubleclick.net/gampad/ads?iu=/21775744923/external/single_ad_samples&sz=640x480&cust_params=sample_ct%3Dlinear&ciu_szs=300x250%2C728x90&gdfp_req=1&output=vast&unviewed_position_start=1&env=vp&impl=s&correlator=';
@@ -24,6 +27,7 @@ const RELIABLE_URLS = [
 
 const DEFAULT_STATE = {
   autoApprovePairing: false,
+  updatedAtMs: 0,
   playlist: {
     version: 1,
     orientation: 'LANDSCAPE',
@@ -96,49 +100,149 @@ const DEFAULT_STATE = {
   uploadedVideos: {}
 };
 
-function sanitizeUrl(url, index) {
-  if (!url || String(url).includes('commondatastorage.googleapis.com/gtv-videos-bucket')) {
+function sanitizeUrl(url, index, videoId, uploadedVideos) {
+  const s = String(url || '');
+  if (!s || s.includes('commondatastorage.googleapis.com/gtv-videos-bucket')) {
     return RELIABLE_URLS[index % RELIABLE_URLS.length];
   }
-  return url;
+  // If a previous upload used tmpfiles.org (which blocks HTML5 <video> & ExoPlayer),
+  // route to our own /api/upload endpoint if chunks exist, or a working MP4 stream.
+  if (s.includes('tmpfiles.org')) {
+    if (videoId && uploadedVideos && uploadedVideos[videoId] && uploadedVideos[videoId].totalChunks) {
+      return `https://ads-broo.vercel.app/api/upload?id=${videoId}`;
+    }
+    return RELIABLE_URLS[index % RELIABLE_URLS.length];
+  }
+  return s;
+}
+
+function normalizeParsedState(parsed) {
+  const merged = {
+    ...DEFAULT_STATE,
+    ...(parsed || {}),
+    playlist: {
+      ...DEFAULT_STATE.playlist,
+      ...((parsed && parsed.playlist) || {})
+    },
+    approvedCodes: {
+      ...((parsed && parsed.approvedCodes) || {})
+    },
+    devices: {
+      ...((parsed && parsed.devices) || {})
+    },
+    queuedActions: {
+      ...((parsed && parsed.queuedActions) || {})
+    },
+    uploadedVideos: {
+      ...((parsed && parsed.uploadedVideos) || {})
+    }
+  };
+  if (Array.isArray(merged.playlist.videos)) {
+    merged.playlist.videos = merged.playlist.videos.map((v, idx) => ({
+      ...v,
+      url: sanitizeUrl(v.url, idx, v.id, merged.uploadedVideos)
+    }));
+  }
+  return merged;
 }
 
 function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
       const raw = fs.readFileSync(STATE_FILE, 'utf8');
-      const parsed = JSON.parse(raw);
-      const merged = {
-        ...DEFAULT_STATE,
-        ...parsed,
-        playlist: {
-          ...DEFAULT_STATE.playlist,
-          ...(parsed.playlist || {})
-        },
-        uploadedVideos: {
-          ...(parsed.uploadedVideos || {})
-        }
-      };
-      if (Array.isArray(merged.playlist.videos)) {
-        merged.playlist.videos = merged.playlist.videos.map((v, idx) => ({
-          ...v,
-          url: sanitizeUrl(v.url, idx)
-        }));
-      }
-      return merged;
+      return normalizeParsedState(JSON.parse(raw));
     }
-  } catch (e) {
-    // fallback to default state
-  }
+  } catch (e) {}
   return JSON.parse(JSON.stringify(DEFAULT_STATE));
 }
 
 function saveState(state) {
+  state.updatedAtMs = Date.now();
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
-  } catch (e) {
-    // ignore write errors in read-only environments
+  } catch (e) {}
+  return state;
+}
+
+async function loadStateAsync() {
+  const localState = loadState();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(FIRESTORE_STATE_DOC_URL, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const doc = await res.json();
+      const rawJson = doc && doc.fields && doc.fields.stateJson && doc.fields.stateJson.stringValue;
+      const remoteUpdatedMs = Number(
+        (doc && doc.fields && doc.fields.updatedAtMs && doc.fields.updatedAtMs.integerValue) || 0
+      );
+      if (rawJson) {
+        const remoteState = normalizeParsedState(JSON.parse(rawJson));
+        remoteState.updatedAtMs = remoteUpdatedMs || remoteState.updatedAtMs || 0;
+        const localVer = Number(localState.playlist && localState.playlist.version) || 1;
+        const remoteVer = Number(remoteState.playlist && remoteState.playlist.version) || 1;
+        if (
+          remoteVer >= localVer ||
+          remoteUpdatedMs >= (Number(localState.updatedAtMs) || 0)
+        ) {
+          try {
+            fs.writeFileSync(STATE_FILE, JSON.stringify(remoteState, null, 2), 'utf8');
+          } catch (e) {}
+          return remoteState;
+        }
+      }
+    }
+  } catch (e) {}
+  return localState;
+}
+
+async function saveStateAsync(state) {
+  const nowMs = Date.now();
+  state.updatedAtMs = nowMs;
+  saveState(state);
+
+  // Strip any oversized base64 fields from stateJson before saving to Firestore cms_global/live_state
+  const slimState = {
+    ...state,
+    uploadedVideos: {}
+  };
+  if (state.uploadedVideos) {
+    Object.keys(state.uploadedVideos).forEach((k) => {
+      const item = state.uploadedVideos[k];
+      if (item) {
+        slimState.uploadedVideos[k] = {
+          videoId: item.videoId,
+          filename: item.filename,
+          sizeBytes: item.sizeBytes,
+          totalChunks: item.totalChunks || 0,
+          cdnUrl: item.cdnUrl || null,
+          url: item.url,
+          uploadedAt: item.uploadedAt
+        };
+      }
+    });
   }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    await fetch(FIRESTORE_STATE_DOC_URL, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          stateJson: { stringValue: JSON.stringify(slimState) },
+          updatedAtMs: { integerValue: String(nowMs) }
+        }
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+  } catch (e) {}
   return state;
 }
 
@@ -155,8 +259,11 @@ function setCors(res) {
 module.exports = {
   loadState,
   saveState,
+  loadStateAsync,
+  saveStateAsync,
   setCors,
   SAMPLE_VAST_TAG,
   RELIABLE_URLS,
-  UPLOAD_DIR
+  UPLOAD_DIR,
+  FIRESTORE_BASE_URL
 };

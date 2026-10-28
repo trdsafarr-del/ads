@@ -1,17 +1,16 @@
-const { loadState, saveState, setCors } = require('../_store');
+const { loadStateAsync, saveStateAsync, setCors } = require('../_store');
 
-module.exports = (req, res) => {
+module.exports = async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  const state = loadState();
+  const state = await loadStateAsync();
   state.approvedCodes = state.approvedCodes || {};
   state.devices = state.devices || {};
 
   if (req.method === 'GET') {
-    // Only return devices that are genuinely paired with an approved 6-digit code
     const pairedDevices = Object.values(state.devices).filter(
       (d) => d && d.paired === true && d.pairingCode && state.approvedCodes[d.pairingCode]
     );
@@ -25,7 +24,6 @@ module.exports = (req, res) => {
   if (req.method === 'POST') {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
 
-    // Case 1: Web Dashboard approving a 6-digit code entered by user
     if (body.action === 'approveCode' && body.pairingCode) {
       const code = String(body.pairingCode).trim();
       state.approvedCodes[code] = {
@@ -33,7 +31,7 @@ module.exports = (req, res) => {
         deviceName: body.deviceName || `TV Screen (${code})`,
         approvedAt: Date.now()
       };
-      saveState(state);
+      await saveStateAsync(state);
       return res.status(200).json({
         success: true,
         message: `Pairing code ${code} approved`,
@@ -41,7 +39,6 @@ module.exports = (req, res) => {
       });
     }
 
-    // Case 2: Unpair device from Android Admin Panel or Web Dashboard
     if (body.action === 'unpairDevice') {
       const targetDeviceId = body.deviceId;
       const targetCode = body.pairingCode ? String(body.pairingCode).trim() : null;
@@ -56,19 +53,17 @@ module.exports = (req, res) => {
       if (targetCode && state.approvedCodes[targetCode]) {
         delete state.approvedCodes[targetCode];
       }
-      // Queue unpair action in case unpair was triggered from Web Dashboard
       if (targetDeviceId) {
         state.queuedActions = state.queuedActions || {};
         state.queuedActions[targetDeviceId] = 'unpairDevice';
       }
-      saveState(state);
+      await saveStateAsync(state);
       return res.status(200).json({
         success: true,
         message: 'Device unpaired'
       });
     }
 
-    // Case 3: Android TV Device verifying pairing with { deviceId, pairingCode, deviceInfo }
     const { deviceId, pairingCode, deviceInfo } = body;
     if (!deviceId || !pairingCode) {
       return res.status(400).json({ success: false, error: 'Missing deviceId or pairingCode' });
@@ -79,7 +74,6 @@ module.exports = (req, res) => {
     const isApproved = Boolean(approvedEntry);
 
     if (!isApproved) {
-      // Do NOT add unpaired devices to state.devices (prevents any fake device entry)
       return res.status(200).json({
         success: false,
         deviceToken: null,
@@ -109,7 +103,7 @@ module.exports = (req, res) => {
       status: 'PLAYING',
       lastSeen: Date.now()
     };
-    saveState(state);
+    await saveStateAsync(state);
 
     return res.status(200).json({
       success: true,

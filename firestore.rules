@@ -84,6 +84,46 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidCmsGlobalState(data) {
+      return data.stateJson is string && data.stateJson.size() >= 2 && data.stateJson.size() <= 900000 &&
+             data.updatedAtMs is int && data.updatedAtMs >= 0;
+    }
+
+    function isValidCmsUploadChunk(data) {
+      return data.videoId is string && data.videoId.size() >= 1 && data.videoId.size() <= 128 &&
+             data.chunkIndex is int && data.chunkIndex >= 0 && data.chunkIndex <= 200 &&
+             data.totalChunks is int && data.totalChunks >= 1 && data.totalChunks <= 200 &&
+             data.data is string && data.data.size() >= 1 && data.data.size() <= 950000 &&
+             (!('mimeType' in data) || (data.mimeType is string && data.mimeType.size() <= 64)) &&
+             data.updatedAtMs is int && data.updatedAtMs >= 0;
+    }
+
+    match /cms_global/{docId} {
+      allow get: if isValidId(docId);
+      allow list: if false;
+      allow create: if isValidId(docId) &&
+                       incoming().keys().hasAll(['stateJson', 'updatedAtMs']) &&
+                       incoming().keys().hasOnly(['stateJson', 'updatedAtMs']) &&
+                       isValidCmsGlobalState(incoming());
+      allow update: if isValidId(docId) &&
+                       isValidCmsGlobalState(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['stateJson', 'updatedAtMs']);
+      allow delete: if false;
+    }
+
+    match /cms_uploads/{chunkId} {
+      allow get: if isValidId(chunkId);
+      allow list: if false;
+      allow create: if isValidId(chunkId) &&
+                       incoming().keys().hasAll(['videoId', 'chunkIndex', 'totalChunks', 'data', 'updatedAtMs']) &&
+                       incoming().keys().hasOnly(['videoId', 'chunkIndex', 'totalChunks', 'data', 'mimeType', 'updatedAtMs']) &&
+                       isValidCmsUploadChunk(incoming());
+      allow update: if isValidId(chunkId) &&
+                       isValidCmsUploadChunk(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['videoId', 'chunkIndex', 'totalChunks', 'data', 'mimeType', 'updatedAtMs']);
+      allow delete: if isValidId(chunkId);
+    }
+
     match /users/{userId}/videos/{videoId} {
       allow get: if isSignedIn() && isValidId(userId) && isValidId(videoId) && request.auth.uid == userId && existing().userId == request.auth.uid;
       allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;

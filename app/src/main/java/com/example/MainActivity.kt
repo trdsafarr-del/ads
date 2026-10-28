@@ -55,24 +55,18 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    SignageAuthGate { currentUserId ->
-                        val vm: SignageViewModel = viewModel(key = currentUserId)
-                        activeViewModel = vm
-                        val state by vm.uiState.collectAsStateWithLifecycle()
+                    val vm: SignageViewModel = viewModel()
+                    activeViewModel = vm
+                    val state by vm.uiState.collectAsStateWithLifecycle()
 
-                        LaunchedEffect(currentUserId) {
-                            vm.bindAuthenticatedFirestoreUser(currentUserId)
-                        }
-
-                        LaunchedEffect(state.displayOrientation) {
-                            SignageOrientation.applyOrientation(
-                                this@MainActivity,
-                                state.displayOrientation
-                            )
-                        }
-
-                        SignageScreen(viewModel = vm)
+                    LaunchedEffect(state.displayOrientation) {
+                        SignageOrientation.applyOrientation(
+                            this@MainActivity,
+                            state.displayOrientation
+                        )
                     }
+
+                    SignageScreen(viewModel = vm)
                 }
             }
         }

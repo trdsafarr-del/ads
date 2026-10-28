@@ -1,6 +1,6 @@
-const { loadState, saveState, setCors } = require('../_store');
+const { loadStateAsync, saveStateAsync, setCors } = require('../_store');
 
-module.exports = (req, res) => {
+module.exports = async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -10,13 +10,27 @@ module.exports = (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const state = loadState();
+  const state = await loadStateAsync();
   state.devices = state.devices || {};
   state.queuedActions = state.queuedActions || {};
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
   const targetDevice = body.deviceId || '*';
   const action = body.action;
+
+  // If the client also sent its current videos array, sync it into state.playlist.videos first
+  // so cross-lambda calls never fall back to stale default videos!
+  if (Array.isArray(body.videos) && body.videos.length > 0) {
+    state.playlist.videos = body.videos.map((v, idx) => ({
+      id: v.id || `vid_${Date.now()}_${idx + 1}`,
+      title: v.title || `Campaign Video #${idx + 1}`,
+      url: v.url,
+      order: idx + 1,
+      duration: Number(v.duration) || 30,
+      checksum: v.checksum || null,
+      adTagUrl: v.enableVast === false ? null : (v.adTagUrl !== undefined ? v.adTagUrl : null)
+    }));
+  }
 
   const queueForTargetOrAll = (cmd) => {
     if (targetDevice === '*') {
@@ -79,7 +93,7 @@ module.exports = (req, res) => {
       });
     }
     state.playlist.version = (Number(state.playlist.version) || 1) + 1;
-    saveState(state);
+    await saveStateAsync(state);
 
     return res.status(200).json({
       success: true,
@@ -98,7 +112,12 @@ module.exports = (req, res) => {
     const requestedIds = Array.isArray(body.videoIds)
       ? body.videoIds.filter((id) => allVideos.some((v) => v.id === id))
       : [];
-    const effectiveIds = requestedIds.length > 0 ? requestedIds : allVideos.map((v) => v.id);
+    const effectiveIds =
+      requestedIds.length > 0
+        ? requestedIds
+        : Array.isArray(body.videoIds) && body.videoIds.length > 0
+        ? body.videoIds
+        : allVideos.map((v) => v.id);
     const startVideoId =
       (body.startVideoId && effectiveIds.includes(body.startVideoId) ? body.startVideoId : effectiveIds[0]) ||
       (allVideos[0] && allVideos[0].id) ||
@@ -120,7 +139,7 @@ module.exports = (req, res) => {
 
     queueForTargetOrAll(`playVideosNow:${startVideoId}:${nowTs}`);
     state.playlist.version = (Number(state.playlist.version) || 1) + 1;
-    saveState(state);
+    await saveStateAsync(state);
 
     const targetLabel =
       targetDevice === '*'
@@ -200,7 +219,7 @@ module.exports = (req, res) => {
     state.playlist.version = (Number(state.playlist.version) || 1) + 1;
   }
 
-  saveState(state);
+  await saveStateAsync(state);
 
   return res.status(200).json({
     success: true,

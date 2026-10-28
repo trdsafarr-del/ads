@@ -44,5 +44,6 @@ data class PlaylistSchema(
     @Json(name = "autoBootEnabled") val autoBootEnabled: Boolean? = null,
     @Json(name = "lastPushedVideoId") val lastPushedVideoId: String? = null,
     @Json(name = "lastPushTimestamp") val lastPushTimestamp: Long? = null,
+    @Json(name = "activeVideoIds") val activeVideoIds: List<String>? = null,
     @Json(name = "offlineDownloadRequestedVideoId") val offlineDownloadRequestedVideoId: String? = null
 )

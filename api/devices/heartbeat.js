@@ -1,12 +1,12 @@
-const { loadState, saveState, setCors } = require('../_store');
+const { loadStateAsync, saveStateAsync, setCors } = require('../_store');
 
-module.exports = (req, res) => {
+module.exports = async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  const state = loadState();
+  const state = await loadStateAsync();
   state.devices = state.devices || {};
   state.approvedCodes = state.approvedCodes || {};
 
@@ -44,6 +44,8 @@ module.exports = (req, res) => {
     const codeStr = pairingCode ? String(pairingCode).trim() : (existing && existing.pairingCode);
     const isGenuinelyPaired = Boolean(codeStr && state.approvedCodes[codeStr]);
 
+    let stateChanged = false;
+
     if (isGenuinelyPaired) {
       state.devices[deviceId] = {
         ...(existing || {}),
@@ -77,19 +79,23 @@ module.exports = (req, res) => {
         lastSeen: Date.now(),
         paired: true
       };
+      stateChanged = true;
     }
 
-    // Pop any queued remote action for this specific device or wildcard '*'
     let serverAction = null;
     if (state.queuedActions && state.queuedActions[deviceId]) {
       serverAction = state.queuedActions[deviceId];
       delete state.queuedActions[deviceId];
+      stateChanged = true;
     } else if (isGenuinelyPaired && state.queuedActions && state.queuedActions['*']) {
       serverAction = state.queuedActions['*'];
       delete state.queuedActions['*'];
+      stateChanged = true;
     }
 
-    saveState(state);
+    if (stateChanged) {
+      await saveStateAsync(state);
+    }
 
     const dev = state.devices[deviceId] || {};
     const effectivePushTs = Math.max(

@@ -1,12 +1,12 @@
-const { loadState, saveState, setCors, SAMPLE_VAST_TAG } = require('./_store');
+const { loadStateAsync, saveStateAsync, setCors, SAMPLE_VAST_TAG } = require('./_store');
 
-module.exports = (req, res) => {
+module.exports = async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  const state = loadState();
+  const state = await loadStateAsync();
   state.devices = state.devices || {};
   state.queuedActions = state.queuedActions || {};
 
@@ -19,9 +19,7 @@ module.exports = (req, res) => {
         lastPlaylistFetch: Date.now(),
         lastSeen: Date.now()
       };
-      saveState(state);
 
-      // Filter to active selected multi-video queue if configured for this device or globally
       const allVideos = Array.isArray(state.playlist.videos) ? state.playlist.videos : [];
       const activeIds =
         Array.isArray(dev.activeVideoIds) && dev.activeVideoIds.length > 0
@@ -51,7 +49,6 @@ module.exports = (req, res) => {
           ? dev.lastPushedVideoId
           : state.playlist.lastPushedVideoId || (deviceVideos[0] && deviceVideos[0].id) || null;
 
-      // Return playlist tailored with this specific device's Screen Orientation, Video Orientation, Scale Mode & Play Queue
       const devicePlaylist = {
         ...state.playlist,
         videos: deviceVideos,
@@ -73,7 +70,6 @@ module.exports = (req, res) => {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const current = state.playlist;
 
-    // Support per-device orientation updates from Android TV or Web Dashboard
     if (body.deviceId && state.devices[body.deviceId]) {
       const dev = state.devices[body.deviceId];
       if (typeof body.orientation === 'string' && body.orientation.trim() !== '') {
@@ -89,7 +85,7 @@ module.exports = (req, res) => {
       state.devices[body.deviceId] = dev;
       current.version = (Number(current.version) || 1) + 1;
       state.playlist = current;
-      saveState(state);
+      await saveStateAsync(state);
       return res.status(200).json({
         success: true,
         device: dev,
@@ -97,7 +93,6 @@ module.exports = (req, res) => {
       });
     }
 
-    // Support adding/pushing a single video directly from Android or Web
     if (body.action === 'addSingleVideo' && body.video) {
       const v = body.video;
       const newId = v.id || `vid_${Date.now()}`;
@@ -135,14 +130,14 @@ module.exports = (req, res) => {
 
     if (Array.isArray(body.activeVideoIds)) {
       current.activeVideoIds = body.activeVideoIds.length > 0 ? body.activeVideoIds : null;
+    } else if (body.activeVideoIds === null) {
+      current.activeVideoIds = null;
     }
 
     if (typeof body.tickerText === 'string') {
       current.tickerText = body.tickerText;
     }
 
-    // When global orientation/videoOrientation/scaleMode is changed on the Web Dashboard,
-    // also update all paired devices so every TV applies the new orientation immediately!
     if (typeof body.orientation === 'string' && body.orientation.trim() !== '') {
       const orient = body.orientation.trim();
       current.orientation = orient;
@@ -225,7 +220,7 @@ module.exports = (req, res) => {
     ];
 
     state.playlist = current;
-    saveState(state);
+    await saveStateAsync(state);
 
     return res.status(200).json({
       success: true,

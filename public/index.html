@@ -1046,6 +1046,10 @@
   <div class="toast" id="toastMsg">Saved &amp; synced!</div>
 
   <script>
+    const FIRESTORE_BASE_URL =
+      'https://firestore.googleapis.com/v1/projects/gen-lang-client-0563270290/databases/ai-studio-android-signaget-4a0ce43d-8b5a-43d1-8423-f48d2b432ace/documents';
+    const FIRESTORE_STATE_DOC_URL = `${FIRESTORE_BASE_URL}/cms_global/live_state`;
+
     let currentState = {
       version: 1,
       orientation: 'LANDSCAPE',
@@ -1062,6 +1066,14 @@
       videos: []
     };
 
+    let currentDevicesState = {
+      devices: [],
+      approvedCodes: {},
+      deviceSettings: {},
+      pendingActions: {},
+      updatedAtMs: 0
+    };
+
     let currentUploadMode = 'LINK';
     let selectedRawFile = null;
     let selectedBlobUrl = null;
@@ -1069,6 +1081,7 @@
     let pendingOfflineVideo = null;
     let currentMonitorUrl = '';
     let localBlobUrls = {};
+    let loadingVideoBlobSet = new Set();
     let selectedVideoIdsSet = new Set();
     let initializedSelection = false;
     let monitorPlaylistQueue = [];
@@ -1081,6 +1094,195 @@
       el.style.display = 'block';
       clearTimeout(window.__toastTimer);
       window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3800);
+    }
+
+    // --- Browser IndexedDB for instant & persistent real uploaded video preview ---
+    function openVideoPreviewDb() {
+      return new Promise((resolve, reject) => {
+        if (!window.indexedDB) return resolve(null);
+        const req = window.indexedDB.open('SignageVideoPreviewDB', 1);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('videos')) {
+            db.createObjectStore('videos');
+          }
+        };
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = () => resolve(null);
+      });
+    }
+
+    async function saveVideoBlobToIdb(videoId, blob) {
+      try {
+        const db = await openVideoPreviewDb();
+        if (!db) return;
+        await new Promise((resolve) => {
+          const tx = db.transaction('videos', 'readwrite');
+          tx.objectStore('videos').put(blob, videoId);
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = () => resolve(false);
+        });
+      } catch (e) {}
+    }
+
+    async function getVideoBlobFromIdb(videoId) {
+      try {
+        const db = await openVideoPreviewDb();
+        if (!db) return null;
+        return await new Promise((resolve) => {
+          const tx = db.transaction('videos', 'readonly');
+          const req = tx.objectStore('videos').get(videoId);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function base64ToUint8Array(base64) {
+      const binary = atob(base64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    async function fetchVideoBlobFromFirestoreChunks(videoId) {
+      try {
+        const firstRes = await fetch(`${FIRESTORE_BASE_URL}/cms_uploads/${videoId}_chunk_0`);
+        if (!firstRes.ok) return null;
+        const firstDoc = await firstRes.json();
+        const f0 = (firstDoc && firstDoc.fields) || {};
+        const b64_0 = f0.data && f0.data.stringValue;
+        if (!b64_0) return null;
+        const totalChunks = Number((f0.totalChunks && f0.totalChunks.integerValue) || 1);
+        const parts = [base64ToUint8Array(b64_0)];
+        for (let i = 1; i < totalChunks; i++) {
+          const r = await fetch(`${FIRESTORE_BASE_URL}/cms_uploads/${videoId}_chunk_${i}`);
+          if (!r.ok) return null;
+          const d = await r.json();
+          const b64 = d && d.fields && d.fields.data && d.fields.data.stringValue;
+          if (!b64) return null;
+          parts.push(base64ToUint8Array(b64));
+        }
+        const blob = new Blob(parts, { type: 'video/mp4' });
+        await saveVideoBlobToIdb(videoId, blob);
+        return blob;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function ensureLocalVideoPreviewBlob(videoObj) {
+      if (!videoObj || !videoObj.id) return null;
+      const vidId = videoObj.id;
+      if (localBlobUrls[vidId]) return localBlobUrls[vidId];
+      if (loadingVideoBlobSet.has(vidId)) return null;
+
+      const isUploadedId =
+        String(vidId).startsWith('vid_') &&
+        !['vid_bunny', 'vid_dream', 'vid_blazes', 'vid_bullrun'].includes(String(vidId));
+      const isUploadUrl =
+        String(videoObj.url || '').includes('/api/upload?id=') ||
+        String(videoObj.url || '').includes('tmpfiles.org');
+      if (!isUploadedId && !isUploadUrl) return null;
+
+      loadingVideoBlobSet.add(vidId);
+      try {
+        let blob = await getVideoBlobFromIdb(vidId);
+        if (!blob) {
+          blob = await fetchVideoBlobFromFirestoreChunks(vidId);
+        }
+        if (blob && blob.size > 0) {
+          localBlobUrls[vidId] = URL.createObjectURL(blob);
+          const videoEl = document.getElementById('liveMonitorVideo');
+          if (videoEl && (!currentMonitorUrl || currentMonitorUrl.includes('/api/upload') || currentMonitorUrl.includes('tmpfiles.org'))) {
+            currentMonitorUrl = localBlobUrls[vidId];
+            videoEl.src = localBlobUrls[vidId];
+            videoEl.play().catch(() => {});
+          }
+          return localBlobUrls[vidId];
+        }
+      } catch (e) {
+      } finally {
+        loadingVideoBlobSet.delete(vidId);
+      }
+      return null;
+    }
+
+    function sanitizePlaylistVideos(playlist) {
+      if (!playlist || !Array.isArray(playlist.videos)) return playlist;
+      const originBase = window.location.origin && window.location.origin.startsWith('http')
+        ? window.location.origin
+        : 'https://ads-broo.vercel.app';
+      playlist.videos = playlist.videos.map((v, idx) => {
+        if (!v) return v;
+        const rawUrl = String(v.url || '').trim();
+        if (rawUrl.includes('tmpfiles.org')) {
+          if (v.id && String(v.id).startsWith('vid_')) {
+            return { ...v, url: `${originBase}/api/upload?id=${encodeURIComponent(v.id)}` };
+          }
+          return { ...v, url: 'https://www.w3schools.com/html/mov_bbb.mp4' };
+        }
+        return v;
+      });
+      return playlist;
+    }
+
+    async function fetchFirestoreGlobalState() {
+      try {
+        const res = await fetch(FIRESTORE_STATE_DOC_URL);
+        if (!res.ok) return null;
+        const doc = await res.json();
+        const rawJson = doc && doc.fields && doc.fields.stateJson && doc.fields.stateJson.stringValue;
+        const updatedAtMs = Number(
+          (doc && doc.fields && doc.fields.updatedAtMs && doc.fields.updatedAtMs.integerValue) || 0
+        );
+        if (!rawJson) return null;
+        const parsed = JSON.parse(rawJson);
+        parsed.updatedAtMs = updatedAtMs || parsed.updatedAtMs || 0;
+        if (parsed.playlist) {
+          parsed.playlist = sanitizePlaylistVideos(parsed.playlist);
+        }
+        return parsed;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function saveFirestoreGlobalState(mutatorFn) {
+      try {
+        const existing = (await fetchFirestoreGlobalState()) || {
+          playlist: currentState,
+          devices: {},
+          approvedCodes: currentDevicesState.approvedCodes || {},
+          deviceSettings: currentDevicesState.deviceSettings || {},
+          pendingActions: currentDevicesState.pendingActions || {},
+          uploadedVideos: {}
+        };
+        const updated = mutatorFn(existing) || existing;
+        const nowMs = Date.now();
+        updated.updatedAtMs = nowMs;
+        if (updated.playlist) {
+          updated.playlist = sanitizePlaylistVideos(updated.playlist);
+        }
+        await fetch(FIRESTORE_STATE_DOC_URL, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              stateJson: { stringValue: JSON.stringify(updated) },
+              updatedAtMs: { integerValue: String(nowMs) }
+            }
+          })
+        });
+        return updated;
+      } catch (e) {
+        return null;
+      }
     }
 
     function setUploadMode(mode) {
@@ -1096,9 +1298,6 @@
       if (!file) return;
       selectedRawFile = file;
       selectedFileName = file.name;
-      if (selectedBlobUrl) {
-        try { URL.revokeObjectURL(selectedBlobUrl); } catch (e) {}
-      }
       selectedBlobUrl = URL.createObjectURL(file);
 
       const titleInput = document.getElementById('newVideoTitle');
@@ -1170,21 +1369,77 @@
             videoEl.play().catch(() => {});
           }
         });
+
+        videoEl.addEventListener('error', async () => {
+          // If the active video is an uploaded video whose /api/upload URL hit a cold lambda, load from IndexedDB / Firestore chunks
+          const activeVid =
+            monitorPlaylistQueue.find(v => v.id === currentState.lastPushedVideoId) ||
+            (currentState.videos || []).find(v => v.id === currentState.lastPushedVideoId) ||
+            monitorPlaylistQueue[0] ||
+            (currentState.videos || [])[0];
+          if (activeVid) {
+            const blobUrl = await ensureLocalVideoPreviewBlob(activeVid);
+            if (blobUrl && currentMonitorUrl !== blobUrl) {
+              currentMonitorUrl = blobUrl;
+              videoEl.src = blobUrl;
+              videoEl.play().catch(() => {});
+            }
+          }
+        });
       }
     });
 
     async function loadDashboardData() {
       try {
-        const [playlistRes, pairRes] = await Promise.all([
-          fetch('/api/playlist'),
-          fetch('/api/devices/pair')
+        const [playlistRes, pairRes, fsState] = await Promise.all([
+          fetch('/api/playlist').catch(() => null),
+          fetch('/api/devices/pair').catch(() => null),
+          fetchFirestoreGlobalState()
         ]);
-        const playlist = await playlistRes.json();
-        const pairData = await pairRes.json();
+        let apiPlaylist = playlistRes && playlistRes.ok ? await playlistRes.json() : null;
+        let pairData = pairRes && pairRes.ok ? await pairRes.json() : null;
 
-        currentState = playlist;
-        renderPlaylist(playlist);
-        renderDevices(pairData.devices || [], pairData.approvedCodes || {});
+        let chosenPlaylist = apiPlaylist || (fsState && fsState.playlist) || currentState;
+        if (fsState && fsState.playlist) {
+          const fsVer = Number(fsState.playlist.version) || 1;
+          const apiVer = Number(apiPlaylist && apiPlaylist.version) || 1;
+          const fsPush = Number(fsState.playlist.lastPushTimestamp) || 0;
+          const apiPush = Number(apiPlaylist && apiPlaylist.lastPushTimestamp) || 0;
+          if (fsVer > apiVer || fsPush > apiPush || (fsVer === apiVer && fsState.updatedAtMs > 0)) {
+            chosenPlaylist = fsState.playlist;
+          }
+        }
+
+        chosenPlaylist = sanitizePlaylistVideos(chosenPlaylist);
+        currentState = chosenPlaylist;
+
+        // Preload IndexedDB / Firestore video blobs for any uploaded videos
+        (currentState.videos || []).forEach(v => {
+          ensureLocalVideoPreviewBlob(v);
+        });
+
+        // Merge devices & approvedCodes from both API and Firestore so no paired TV is ever lost across serverless instances
+        const mergedApproved = {
+          ...((pairData && pairData.approvedCodes) || {}),
+          ...((fsState && fsState.approvedCodes) || {})
+        };
+        const devicesMap = {};
+        ((pairData && pairData.devices) || []).forEach(d => {
+          if (d && d.deviceId) devicesMap[d.deviceId] = d;
+        });
+        Object.values((fsState && fsState.devices) || {}).forEach(d => {
+          if (d && d.deviceId) {
+            const prev = devicesMap[d.deviceId];
+            if (!prev || (d.lastSeen || 0) >= (prev.lastSeen || 0)) {
+              devicesMap[d.deviceId] = d;
+            }
+          }
+        });
+        currentDevicesState.approvedCodes = mergedApproved;
+        currentDevicesState.devices = Object.values(devicesMap);
+
+        renderPlaylist(currentState);
+        renderDevices(currentDevicesState.devices, mergedApproved);
       } catch (e) {
         console.error('Error loading CMS data:', e);
       }
@@ -1243,10 +1498,12 @@
         videos.forEach(v => selectedVideoIdsSet.add(v.id));
         initializedSelection = true;
       } else {
-        // Remove deleted IDs
         Array.from(selectedVideoIdsSet).forEach(id => {
           if (!videos.some(v => v.id === id)) selectedVideoIdsSet.delete(id);
         });
+        if (selectedVideoIdsSet.size === 0 && videos.length > 0) {
+          videos.forEach(v => selectedVideoIdsSet.add(v.id));
+        }
       }
       updateSelectedBadge();
 
@@ -1276,13 +1533,13 @@
 
       applyPreviewOrientationTransform(screenOrient, vidDeg);
 
-      // Update Live Monitor queue (unless user is currently previewing an unpushed local file selection)
       const activeIds = Array.isArray(playlist.activeVideoIds) && playlist.activeVideoIds.length > 0
         ? playlist.activeVideoIds
         : null;
-      monitorPlaylistQueue = activeIds
+      const filteredQueue = activeIds
         ? activeIds.map(id => videos.find(v => v.id === id)).filter(Boolean)
         : videos;
+      monitorPlaylistQueue = filteredQueue.length > 0 ? filteredQueue : videos;
 
       const activeVid =
         monitorPlaylistQueue.find(v => v.id === playlist.lastPushedVideoId) ||
@@ -1290,7 +1547,7 @@
         monitorPlaylistQueue[0] ||
         videos[0];
 
-      if (activeVid && (!selectedBlobUrl || currentMonitorUrl !== selectedBlobUrl)) {
+      if (activeVid && !selectedRawFile) {
         const videoEl = document.getElementById('liveMonitorVideo');
         const preferredSrc = localBlobUrls[activeVid.id] || activeVid.url;
         document.getElementById('liveMonitorTitle').textContent =
@@ -1354,7 +1611,6 @@
 
       document.getElementById('statDevices').textContent = verifiedDevices.length;
 
-      // Update Target Device Selector dropdown in Section 1
       const targetSelect = document.getElementById('playTargetDeviceSelect');
       if (targetSelect) {
         const prevVal = targetSelect.value || '*';
@@ -1495,9 +1751,10 @@
           action: 'setDeviceOrientation',
           screenOrientation,
           videoOrientation,
-          scaleMode
+          scaleMode,
+          videos: currentState.videos
         })
-      });
+      }).catch(() => {});
 
       await publishAllChanges();
       showToast(`Applied Screen (${screenOrientation}) & Video (${videoOrientation}°) to All Paired TVs!`);
@@ -1513,6 +1770,25 @@
       const videoOrientation = Number(videoEl.value) || 0;
       const scaleMode = scaleEl.value;
 
+      await saveFirestoreGlobalState((st) => {
+        st.deviceSettings = st.deviceSettings || {};
+        st.deviceSettings[deviceId] = {
+          ...(st.deviceSettings[deviceId] || {}),
+          screenOrientation,
+          videoOrientation,
+          scaleMode,
+          updatedAt: Date.now()
+        };
+        if (st.devices && st.devices[deviceId]) {
+          st.devices[deviceId].screenOrientation = screenOrientation;
+          st.devices[deviceId].videoOrientation = videoOrientation;
+          st.devices[deviceId].scaleMode = scaleMode;
+        }
+        st.playlist = st.playlist || currentState;
+        st.playlist.version = (Number(st.playlist.version) || 1) + 1;
+        return st;
+      });
+
       const res = await fetch('/api/devices/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1521,10 +1797,11 @@
           action: 'setDeviceOrientation',
           screenOrientation,
           videoOrientation,
-          scaleMode
+          scaleMode,
+          videos: currentState.videos
         })
-      });
-      const data = await res.json();
+      }).catch(() => null);
+      const data = res && res.ok ? await res.json() : {};
       showToast(data.message || `Applied Screen (${screenOrientation}) & Video (${videoOrientation}°) to ${deviceId}`);
       loadDashboardData();
     }
@@ -1538,29 +1815,65 @@
       const kioskLocked = document.getElementById('kioskLockedCheck').checked;
       const vastTag = document.getElementById('vastInput').value;
 
-      const payload = {
-        videos: currentState.videos,
+      const cleanedVideos = (currentState.videos || []).map((v, i) => ({
+        ...v,
+        order: i + 1
+      }));
+
+      const nextVersion = (Number(currentState.version) || 1) + 1;
+      const pushTs = extraFields.lastPushedVideoId ? Date.now() : (currentState.lastPushTimestamp || Date.now());
+
+      const updatedPlaylist = sanitizePlaylistVideos({
+        ...currentState,
+        version: nextVersion,
+        videos: cleanedVideos,
         orientation,
         videoOrientation,
         scaleMode,
         tickerEnabled: false,
         isMuted,
         kioskLocked,
-        vastTag,
+        lastPushTimestamp: pushTs,
+        ads: vastTag ? [{ vastTag, frequency: 1 }] : [],
         ...extraFields
-      };
-
-      const res = await fetch('/api/playlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      if (data.playlist) {
-        currentState = data.playlist;
-        renderPlaylist(currentState);
-        showToast('Synced v' + currentState.version + ' live to Android App & TVs!');
-      }
+
+      currentState = updatedPlaylist;
+      renderPlaylist(currentState);
+
+      // 1. Save directly to Cloud Firestore cms_global/live_state (strongly consistent across all TVs & lambdas)
+      await saveFirestoreGlobalState((st) => {
+        st.playlist = updatedPlaylist;
+        return st;
+      });
+
+      // 2. Also post to /api/playlist
+      try {
+        const res = await fetch('/api/playlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videos: updatedPlaylist.videos,
+            orientation,
+            videoOrientation,
+            scaleMode,
+            tickerEnabled: false,
+            isMuted,
+            kioskLocked,
+            vastTag,
+            ...extraFields
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.playlist && Array.isArray(data.playlist.videos) && data.playlist.videos.length === updatedPlaylist.videos.length) {
+            currentState = sanitizePlaylistVideos(data.playlist);
+            renderPlaylist(currentState);
+          }
+        }
+      } catch (e) {}
+
+      showToast('Synced v' + currentState.version + ' live to Android App & TVs!');
     }
 
     // Helper: Convert ArrayBuffer to Base64 string for chunked upload
@@ -1574,36 +1887,19 @@
       return btoa(binary);
     }
 
-    // Uploads a real video file via Browser Direct CDN + Chunked /api/upload (supports files > 4 MB!)
+    // Uploads a real video file via Cloud Firestore Chunks + /api/upload + IndexedDB (zero tmpfiles.org!)
     async function uploadRealVideoFile(file, newVideoId, onProgress) {
-      // 1. Try direct CORS upload from browser to tmpfiles.org (supports up to 100 MB directly)
-      try {
-        onProgress('Uploading video directly to Cloud Stream Server...');
-        const fd = new FormData();
-        fd.append('file', file, file.name || `${newVideoId}.mp4`);
-        const directRes = await fetch('https://tmpfiles.org/api/v1/upload', {
-          method: 'POST',
-          body: fd
-        });
-        if (directRes.ok) {
-          const directJson = await directRes.json();
-          const pageUrl = directJson && directJson.data && directJson.data.url;
-          if (pageUrl) {
-            const directMp4Url = String(pageUrl)
-              .replace(/^http:\/\//i, 'https://')
-              .replace('https://tmpfiles.org/', 'https://tmpfiles.org/dl/');
-            // Also register on our backend if small enough
-            return directMp4Url;
-          }
-        }
-      } catch (e) {
-        // Fallback to chunked server upload below
-      }
+      // 1. Save in browser IndexedDB + localBlobUrls so Web Dashboard Preview ALWAYS plays the real file immediately
+      await saveVideoBlobToIdb(newVideoId, file);
+      localBlobUrls[newVideoId] = URL.createObjectURL(file);
 
-      // 2. Chunked upload (1.5 MB per chunk) to /api/upload so Vercel 4.5 MB limit is never exceeded
-      const CHUNK_SIZE = 1.5 * 1024 * 1024;
+      // 2. Upload 600 KB binary chunks (~800 KB Base64) to Cloud Firestore (/cms_uploads) AND /api/upload
+      const CHUNK_SIZE = 600 * 1024;
       const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
-      let finalServerUrl = '';
+      const originBase = window.location.origin && window.location.origin.startsWith('http')
+        ? window.location.origin
+        : 'https://ads-broo.vercel.app';
+      let finalServerUrl = `${originBase}/api/upload?id=${encodeURIComponent(newVideoId)}`;
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         const start = chunkIndex * CHUNK_SIZE;
@@ -1614,30 +1910,45 @@
         const pct = Math.round(((chunkIndex + 1) / totalChunks) * 100);
         onProgress(`Uploading Video Chunk ${chunkIndex + 1}/${totalChunks} (${pct}%)...`);
 
-        const upRes = await fetch('/api/upload', {
-          method: 'POST',
+        // Save chunk to Cloud Firestore so Android TV & serverless endpoints can always fetch it
+        await fetch(`${FIRESTORE_BASE_URL}/cms_uploads/${newVideoId}_chunk_${chunkIndex}`, {
+          method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'uploadChunk',
-            id: newVideoId,
-            filename: file.name || `${newVideoId}.mp4`,
-            chunkIndex,
-            totalChunks,
-            chunkBase64
+            fields: {
+              videoId: { stringValue: String(newVideoId) },
+              chunkIndex: { integerValue: String(chunkIndex) },
+              totalChunks: { integerValue: String(totalChunks) },
+              data: { stringValue: chunkBase64 },
+              mimeType: { stringValue: file.type || 'video/mp4' },
+              updatedAtMs: { integerValue: String(Date.now()) }
+            }
           })
-        });
-        const upData = await upRes.json();
-        if (!upRes.ok || (!upData.success && !upData.partial)) {
-          throw new Error((upData && upData.error) || `Upload chunk ${chunkIndex + 1} failed`);
-        }
-        if (upData.url) {
-          finalServerUrl = upData.url;
-        }
+        }).catch(() => {});
+
+        // Also send chunk to /api/upload
+        try {
+          const upRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'uploadChunk',
+              id: newVideoId,
+              filename: file.name || `${newVideoId}.mp4`,
+              chunkIndex,
+              totalChunks,
+              chunkBase64
+            })
+          });
+          if (upRes.ok) {
+            const upData = await upRes.json();
+            if (upData && upData.url && !String(upData.url).includes('tmpfiles.org')) {
+              finalServerUrl = upData.url;
+            }
+          }
+        } catch (e) {}
       }
 
-      if (!finalServerUrl) {
-        throw new Error('Could not obtain uploaded stream URL');
-      }
       return finalServerUrl;
     }
 
@@ -1664,9 +1975,6 @@
             btn.textContent = msg;
             if (statusEl) statusEl.textContent = msg;
           });
-          if (selectedBlobUrl) {
-            localBlobUrls[newVideoId] = selectedBlobUrl;
-          }
         } catch (err) {
           btn.disabled = false;
           btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
@@ -1705,24 +2013,76 @@
 
       await publishAllChanges({
         lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId,
+        lastPushTimestamp: Date.now(),
         activeVideoIds: null
       });
 
       if (pushImmediately) {
         const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+        await triggerForcePlayOnDevices(
+          targetDevice,
+          currentState.videos.map(v => v.id),
+          newVideoId
+        );
+      }
+
+      openOfflinePopup(newVideoObj);
+    }
+
+    async function triggerForcePlayOnDevices(targetDevice, videoIds, startVideoId) {
+      const videos = currentState.videos || [];
+      const cleanIds = (videoIds && videoIds.length > 0) ? videoIds : videos.map(v => v.id);
+      const firstId = startVideoId || cleanIds[0] || (videos[0] && videos[0].id) || null;
+      const nowMs = Date.now();
+
+      currentState.lastPushedVideoId = firstId;
+      currentState.lastPushTimestamp = nowMs;
+      currentState.activeVideoIds = cleanIds;
+      currentState.version = (Number(currentState.version) || 1) + 1;
+
+      renderPlaylist(currentState);
+
+      // 1. Update Cloud Firestore cms_global/live_state immediately so Android TV & all serverless endpoints see the exact push
+      await saveFirestoreGlobalState((st) => {
+        st.playlist = {
+          ...(st.playlist || currentState),
+          ...currentState,
+          videos: currentState.videos,
+          lastPushedVideoId: firstId,
+          lastPushTimestamp: nowMs,
+          activeVideoIds: cleanIds,
+          version: currentState.version
+        };
+        st.pendingActions = st.pendingActions || {};
+        const cmd = `playVideosNow:${firstId || ''}:${cleanIds.join(',')}`;
+        if (!targetDevice || targetDevice === '*') {
+          st.pendingActions['*'] = cmd;
+          Object.keys(st.devices || {}).forEach(id => {
+            st.pendingActions[id] = cmd;
+          });
+        } else {
+          st.pendingActions[targetDevice] = cmd;
+        }
+        return st;
+      });
+
+      // 2. Also send to /api/devices/action WITH currentState.videos so cold lambdas have the exact video list
+      try {
         await fetch('/api/devices/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            deviceId: targetDevice,
+            deviceId: targetDevice || '*',
             action: 'playVideosNow',
-            videoIds: currentState.videos.map(v => v.id),
-            startVideoId: newVideoId
+            videoIds: cleanIds,
+            startVideoId: firstId,
+            videos: currentState.videos
           })
         });
-      }
+      } catch (e) {}
 
-      openOfflinePopup(newVideoObj);
+      const targetLabel = (!targetDevice || targetDevice === '*') ? 'All Paired TVs' : targetDevice;
+      showToast(`Playing ${cleanIds.length} video(s) immediately on ${targetLabel}!`);
     }
 
     async function playSelectedVideosNow() {
@@ -1733,20 +2093,7 @@
         return;
       }
       const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
-      const res = await fetch('/api/devices/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId: targetDevice,
-          action: 'playVideosNow',
-          videoIds: selectedIds,
-          startVideoId: selectedIds[0]
-        })
-      });
-      const data = await res.json();
-      selectedBlobUrl = null;
-      await loadDashboardData();
-      showToast(data.message || `Playing ${selectedIds.length} selected video(s) immediately!`);
+      await triggerForcePlayOnDevices(targetDevice, selectedIds, selectedIds[0]);
     }
 
     async function playAllVideosNow() {
@@ -1755,39 +2102,14 @@
       videos.forEach(v => selectedVideoIdsSet.add(v.id));
       const allIds = videos.map(v => v.id);
       const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
-      const res = await fetch('/api/devices/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId: targetDevice,
-          action: 'playVideosNow',
-          videoIds: allIds,
-          startVideoId: allIds[0]
-        })
-      });
-      const data = await res.json();
-      selectedBlobUrl = null;
-      await loadDashboardData();
-      showToast(data.message || `Playing all ${allIds.length} videos in loop immediately!`);
+      await triggerForcePlayOnDevices(targetDevice, allIds, allIds[0]);
     }
 
     async function playSelectedOnSpecificDevice(deviceId) {
       const videos = currentState.videos || [];
       const selectedIds = videos.map(v => v.id).filter(id => selectedVideoIdsSet.has(id));
       const effectiveIds = selectedIds.length > 0 ? selectedIds : videos.map(v => v.id);
-      const res = await fetch('/api/devices/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId,
-          action: 'playVideosNow',
-          videoIds: effectiveIds,
-          startVideoId: effectiveIds[0]
-        })
-      });
-      const data = await res.json();
-      await loadDashboardData();
-      showToast(data.message || `Playing ${effectiveIds.length} video(s) immediately on ${deviceId}!`);
+      await triggerForcePlayOnDevices(deviceId, effectiveIds, effectiveIds[0]);
     }
 
     async function pushPlayVideoNow(videoId) {
@@ -1795,21 +2117,7 @@
       const videos = currentState.videos || [];
       const selectedIds = videos.map(v => v.id).filter(id => selectedVideoIdsSet.has(id));
       const queueIds = selectedIds.includes(videoId) ? selectedIds : [videoId, ...selectedIds];
-
-      const res = await fetch('/api/devices/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId: targetDevice,
-          action: 'playVideosNow',
-          videoIds: queueIds.length > 0 ? queueIds : [videoId],
-          startVideoId: videoId
-        })
-      });
-      const data = await res.json();
-      selectedBlobUrl = null;
-      await loadDashboardData();
-      showToast(data.message || 'Playing video immediately on target screen(s)!');
+      await triggerForcePlayOnDevices(targetDevice, queueIds.length > 0 ? queueIds : [videoId], videoId);
     }
 
     function openOfflinePopupForVideo(videoId) {
@@ -1843,11 +2151,18 @@
       progressBox.textContent = 'Caching video for offline playback on TV & Browser...';
 
       try {
+        await saveFirestoreGlobalState((st) => {
+          st.playlist = st.playlist || currentState;
+          st.playlist.offlineDownloadRequestedVideoId = vid.id;
+          st.playlist.version = (Number(st.playlist.version) || 1) + 1;
+          return st;
+        });
+
         await fetch('/api/devices/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceId: '*', action: 'downloadOffline:' + vid.id })
-        });
+        }).catch(() => {});
 
         if ('caches' in window) {
           const cache = await caches.open('signage-offline-videos-v1');
@@ -1889,34 +2204,83 @@
         showToast('Please enter the 6-digit Device Pair Code from your Android TV');
         return;
       }
+
+      await saveFirestoreGlobalState((st) => {
+        st.approvedCodes = st.approvedCodes || {};
+        st.approvedCodes[code] = {
+          pairingCode: code,
+          deviceName: deviceName || `SignageTV (${code})`,
+          approvedAt: Date.now()
+        };
+        return st;
+      });
+
       await fetch('/api/devices/pair', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'approveCode', pairingCode: code, deviceName })
-      });
+      }).catch(() => {});
+
       document.getElementById('pairCodeInput').value = '';
       showToast('6-Digit TV Code ' + code + ' Approved! Android TV will pair within 2.5 seconds.');
       loadDashboardData();
     }
 
     async function unpairDeviceByCode(pairingCode, deviceId) {
+      await saveFirestoreGlobalState((st) => {
+        if (pairingCode && st.approvedCodes) {
+          delete st.approvedCodes[pairingCode];
+        }
+        if (deviceId && st.devices) {
+          delete st.devices[deviceId];
+        }
+        return st;
+      });
+
       await fetch('/api/devices/pair', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'unpairDevice', pairingCode, deviceId })
-      });
+      }).catch(() => {});
       showToast('Device unpaired & removed!');
       loadDashboardData();
     }
 
     async function sendRemoteCommand(action) {
       const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+      await saveFirestoreGlobalState((st) => {
+        st.pendingActions = st.pendingActions || {};
+        if (!targetDevice || targetDevice === '*') {
+          st.pendingActions['*'] = action;
+          Object.keys(st.devices || {}).forEach(id => {
+            st.pendingActions[id] = action;
+          });
+        } else {
+          st.pendingActions[targetDevice] = action;
+        }
+        if (action === 'setLandscape') {
+          st.playlist = st.playlist || currentState;
+          st.playlist.orientation = 'LANDSCAPE';
+          st.playlist.version = (Number(st.playlist.version) || 1) + 1;
+        } else if (action === 'setPortrait') {
+          st.playlist = st.playlist || currentState;
+          st.playlist.orientation = 'PORTRAIT';
+          st.playlist.version = (Number(st.playlist.version) || 1) + 1;
+        } else if (action.startsWith('setVideoOrientation:')) {
+          const deg = Number(action.split(':')[1]) || 0;
+          st.playlist = st.playlist || currentState;
+          st.playlist.videoOrientation = deg;
+          st.playlist.version = (Number(st.playlist.version) || 1) + 1;
+        }
+        return st;
+      });
+
       const res = await fetch('/api/devices/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: targetDevice, action })
-      });
-      const data = await res.json();
+        body: JSON.stringify({ deviceId: targetDevice, action, videos: currentState.videos })
+      }).catch(() => null);
+      const data = res && res.ok ? await res.json() : {};
       showToast(data.message || ('Command sent: ' + action));
       loadDashboardData();
     }

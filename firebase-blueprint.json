@@ -5,199 +5,98 @@
       "description": "Represents a video item in the user's real-time cloud signage loop.",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "description": "UID of the authenticated Google user who owns this signage video."
-        },
-        "title": {
-          "type": "string",
-          "description": "Display title of the video campaign."
-        },
-        "videoUrl": {
-          "type": "string",
-          "description": "Direct MP4/WebM stream URL for playback."
-        },
-        "durationSeconds": {
-          "type": "integer",
-          "description": "Duration of the video in seconds."
-        },
-        "order": {
-          "type": "integer",
-          "description": "Playback order in the gapless loop."
-        },
-        "videoOrientation": {
-          "type": "string",
-          "enum": ["AUTO", "LANDSCAPE", "PORTRAIT"],
-          "description": "Per-video orientation mode."
-        },
-        "isForcedPlay": {
-          "type": "boolean",
-          "description": "Whether this video is part of an active multi-video force-play selection."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when created (clients must write FieldValue.serverTimestamp())."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when updated (clients must write FieldValue.serverTimestamp())."
-        }
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "durationSeconds": { "type": "integer" },
+        "order": { "type": "integer" },
+        "videoOrientation": { "type": "string", "enum": ["AUTO", "LANDSCAPE", "PORTRAIT"] },
+        "isForcedPlay": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "userId",
-        "title",
-        "videoUrl",
-        "durationSeconds",
-        "order",
-        "videoOrientation",
-        "isForcedPlay",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["userId", "title", "videoUrl", "durationSeconds", "order", "videoOrientation", "isForcedPlay", "createdAt", "updatedAt"]
     },
     "SignageCloudDevice": {
       "title": "SignageCloudDevice",
       "description": "Represents a paired Android TV signage screen and its per-device orientation settings.",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "description": "UID of the authenticated Google user who owns this device."
-        },
-        "deviceId": {
-          "type": "string",
-          "description": "Unique hardware/app identifier of the Android TV."
-        },
-        "name": {
-          "type": "string",
-          "description": "Friendly display name of the TV screen."
-        },
-        "pairCode": {
-          "type": "string",
-          "description": "6-digit pairing code of the TV screen."
-        },
-        "status": {
-          "type": "string",
-          "description": "Current playback status reported by the TV."
-        },
-        "screenOrientation": {
-          "type": "string",
-          "enum": ["LANDSCAPE", "PORTRAIT", "REVERSE_LANDSCAPE", "REVERSE_PORTRAIT"],
-          "description": "Target display orientation for this TV screen."
-        },
-        "videoOrientation": {
-          "type": "string",
-          "enum": ["AUTO", "LANDSCAPE", "PORTRAIT"],
-          "description": "Target video aspect/orientation mode for this TV screen."
-        },
-        "currentVideoTitle": {
-          "type": "string",
-          "description": "Title of the currently playing video on this TV."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when created (clients must write FieldValue.serverTimestamp())."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when updated (clients must write FieldValue.serverTimestamp())."
-        }
+        "userId": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "name": { "type": "string" },
+        "pairCode": { "type": "string" },
+        "status": { "type": "string" },
+        "screenOrientation": { "type": "string", "enum": ["LANDSCAPE", "PORTRAIT", "REVERSE_LANDSCAPE", "REVERSE_PORTRAIT"] },
+        "videoOrientation": { "type": "string", "enum": ["AUTO", "LANDSCAPE", "PORTRAIT"] },
+        "currentVideoTitle": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "userId",
-        "deviceId",
-        "name",
-        "pairCode",
-        "status",
-        "screenOrientation",
-        "videoOrientation",
-        "currentVideoTitle",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["userId", "deviceId", "name", "pairCode", "status", "screenOrientation", "videoOrientation", "currentVideoTitle", "createdAt", "updatedAt"]
     },
     "SignageCloudConfig": {
       "title": "SignageCloudConfig",
-      "description": "Global broadcast configuration and instant force-play command state for the user's signage network.",
+      "description": "Global broadcast configuration and instant force-play command state.",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "description": "UID of the authenticated Google user who owns this config."
-        },
-        "orientation": {
-          "type": "string",
-          "enum": ["LANDSCAPE", "PORTRAIT", "REVERSE_LANDSCAPE", "REVERSE_PORTRAIT"],
-          "description": "Global display orientation."
-        },
-        "videoOrientation": {
-          "type": "string",
-          "enum": ["AUTO", "LANDSCAPE", "PORTRAIT"],
-          "description": "Global video orientation mode."
-        },
-        "scaleMode": {
-          "type": "string",
-          "enum": ["ZOOM", "FIT", "FILL"],
-          "description": "ExoPlayer resize/scale mode."
-        },
-        "pushedVideoId": {
-          "type": "string",
-          "description": "ID of the video to immediately play across connected TVs."
-        },
-        "pushedVideoTimestamp": {
-          "type": "integer",
-          "description": "Epoch milliseconds of the last force-play command."
-        },
-        "version": {
-          "type": "integer",
-          "description": "Monotonically increasing playlist/config version."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when created (clients must write FieldValue.serverTimestamp())."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp when updated (clients must write FieldValue.serverTimestamp())."
-        }
+        "userId": { "type": "string" },
+        "orientation": { "type": "string", "enum": ["LANDSCAPE", "PORTRAIT", "REVERSE_LANDSCAPE", "REVERSE_PORTRAIT"] },
+        "videoOrientation": { "type": "string", "enum": ["AUTO", "LANDSCAPE", "PORTRAIT"] },
+        "scaleMode": { "type": "string", "enum": ["ZOOM", "FIT", "FILL"] },
+        "pushedVideoId": { "type": "string" },
+        "pushedVideoTimestamp": { "type": "integer" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "userId",
-        "orientation",
-        "videoOrientation",
-        "scaleMode",
-        "pushedVideoId",
-        "pushedVideoTimestamp",
-        "version",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["userId", "orientation", "videoOrientation", "scaleMode", "pushedVideoId", "pushedVideoTimestamp", "version", "createdAt", "updatedAt"]
+    },
+    "CmsGlobalState": {
+      "title": "CmsGlobalState",
+      "description": "Shared real-time state across Vercel serverless functions, Web CMS Dashboard, and Kiosk Android TVs.",
+      "type": "object",
+      "properties": {
+        "stateJson": { "type": "string" },
+        "updatedAtMs": { "type": "integer" }
+      },
+      "required": ["stateJson", "updatedAtMs"]
+    },
+    "CmsUploadChunk": {
+      "title": "CmsUploadChunk",
+      "description": "Binary base64 MP4 chunk stored in Cloud Firestore for cross-instance serverless and Android TV video streaming.",
+      "type": "object",
+      "properties": {
+        "videoId": { "type": "string" },
+        "chunkIndex": { "type": "integer" },
+        "totalChunks": { "type": "integer" },
+        "data": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "updatedAtMs": { "type": "integer" }
+      },
+      "required": ["videoId", "chunkIndex", "totalChunks", "data", "updatedAtMs"]
     }
   },
   "firestore": {
     "/users/{userId}/videos/{videoId}": {
-      "schema": {
-        "$ref": "#/entities/SignageCloudVideo"
-      },
+      "schema": { "$ref": "#/entities/SignageCloudVideo" },
       "description": "Real-time cloud playlist videos scoped per authenticated user."
     },
     "/users/{userId}/devices/{deviceId}": {
-      "schema": {
-        "$ref": "#/entities/SignageCloudDevice"
-      },
-      "description": "Real-time paired Android TV devices and orientation state scoped per authenticated user."
+      "schema": { "$ref": "#/entities/SignageCloudDevice" },
+      "description": "Real-time paired Android TV devices scoped per authenticated user."
     },
     "/users/{userId}/config/{configId}": {
-      "schema": {
-        "$ref": "#/entities/SignageCloudConfig"
-      },
+      "schema": { "$ref": "#/entities/SignageCloudConfig" },
       "description": "Real-time signage broadcast configuration scoped per authenticated user."
+    },
+    "/cms_global/{docId}": {
+      "schema": { "$ref": "#/entities/CmsGlobalState" },
+      "description": "Shared real-time kiosk state synced across Vercel serverless functions and Android TV."
+    },
+    "/cms_uploads/{chunkId}": {
+      "schema": { "$ref": "#/entities/CmsUploadChunk" },
+      "description": "Uploaded MP4 video chunks for cross-instance Vercel and Android TV playback."
     }
   }
 }

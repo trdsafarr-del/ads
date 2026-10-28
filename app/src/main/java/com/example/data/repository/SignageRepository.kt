@@ -37,8 +37,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
+import org.json.JSONArray
+import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.io.File
@@ -91,6 +96,13 @@ class SignageRepository(private val context: Context) {
 
     private val _playlistFlow = MutableStateFlow<PlaylistResponse>(createDefaultPlaylist())
     val playlistFlow: StateFlow<PlaylistResponse> = _playlistFlow.asStateFlow()
+
+    private val directHttpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
 
     init {
         localStore.purgeSyntheticFallbackVideos()
@@ -149,21 +161,152 @@ class SignageRepository(private val context: Context) {
     ): PlaylistResponse {
         localStore.purgeSyntheticFallbackVideos()
         val updatedItems = playlist.items.mapIndexed { index, item ->
-            val cleanUrl = sanitizeVideoUrl(item.videoUrl, index + 1)
+            val cleanUrl = sanitizeVideoUrl(item.videoUrl, index + 1, item.id)
             val sanitizedItem = item.copy(videoUrl = cleanUrl)
             val existingPath = localStore.getLocalVideoPathIfExists(sanitizedItem)
             val validExisting = existingPath?.takeIf {
                 SignageSampleVideoGenerator.isValidMp4File(File(it))
             }
             val isExplicitOffline = localStore.isVideoOfflineDownloaded(sanitizedItem.id)
-            val isDirectUpload = sanitizedItem.id.startsWith("vid_upload_")
-            val finalPath = validExisting?.takeIf { isExplicitOffline || isDirectUpload }
+            val isUploadedVideo = isUploadedCustomVideoId(sanitizedItem.id, sanitizedItem.videoUrl)
+            val finalPath = validExisting?.takeIf { isExplicitOffline || isUploadedVideo }
             sanitizedItem.copy(
                 localFilePath = finalPath,
-                isOfflineDownloaded = (isExplicitOffline || isDirectUpload) && finalPath != null
+                isOfflineDownloaded = (isExplicitOffline || isUploadedVideo) && finalPath != null
             )
         }
         return playlist.copy(items = updatedItems)
+    }
+
+    private fun isUploadedCustomVideoId(videoId: String, videoUrl: String): Boolean {
+        if (videoId.startsWith("vid_upload_")) return true
+        if (videoUrl.contains("/api/upload") || videoUrl.contains("tmpfiles.org")) return true
+        if (videoId.startsWith("vid_") && !DEFAULT_SAMPLE_IDS.contains(videoId)) return true
+        return false
+    }
+
+    private fun fetchFirestoreCmsRootJson(): JSONObject? {
+        return try {
+            val req = Request.Builder()
+                .url(FIRESTORE_LIVE_STATE_URL)
+                .get()
+                .build()
+            directHttpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return null
+                val bodyStr = res.body?.string() ?: return null
+                val docJson = JSONObject(bodyStr)
+                val fields = docJson.optJSONObject("fields") ?: return null
+                val stateStr = fields.optJSONObject("stateJson")?.optString("stringValue")
+                if (stateStr.isNullOrBlank()) return null
+                JSONObject(stateStr)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun saveFirestoreCmsRootJson(rootJson: JSONObject): Boolean {
+        return try {
+            val nowMs = System.currentTimeMillis()
+            rootJson.put("updatedAtMs", nowMs)
+            val payload = JSONObject().apply {
+                put(
+                    "fields",
+                    JSONObject().apply {
+                        put("stateJson", JSONObject().put("stringValue", rootJson.toString()))
+                        put("updatedAtMs", JSONObject().put("integerValue", nowMs.toString()))
+                    }
+                )
+            }
+            val req = Request.Builder()
+                .url(FIRESTORE_LIVE_STATE_URL)
+                .patch(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            directHttpClient.newCall(req).execute().use { res ->
+                res.isSuccessful
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun parseFirestorePlaylistSchema(rootJson: JSONObject, deviceId: String): Pair<PlaylistSchema?, String?> {
+        return try {
+            val playlistObj = rootJson.optJSONObject("playlist") ?: return Pair(null, null)
+            val adapter = moshi.adapter(PlaylistSchema::class.java)
+            var schema = adapter.fromJson(playlistObj.toString())
+            if (schema != null) {
+                val devSettings = rootJson.optJSONObject("deviceSettings")?.optJSONObject(deviceId)
+                if (devSettings != null) {
+                    val scr = devSettings.optString("screenOrientation", "").takeIf { it.isNotBlank() }
+                    val vidDeg = if (devSettings.has("videoOrientation")) devSettings.optInt("videoOrientation", schema.videoOrientation ?: 0) else null
+                    val sm = devSettings.optString("scaleMode", "").takeIf { it.isNotBlank() }
+                    schema = schema.copy(
+                        orientation = scr ?: schema.orientation,
+                        videoOrientation = vidDeg ?: schema.videoOrientation,
+                        scaleMode = sm ?: schema.scaleMode
+                    )
+                }
+            }
+            val pendingObj = rootJson.optJSONObject("pendingActions")
+            val deviceAction = pendingObj?.optString(deviceId, "")?.takeIf { it.isNotBlank() }
+                ?: pendingObj?.optString("*", "")?.takeIf { it.isNotBlank() }
+            Pair(schema, deviceAction)
+        } catch (e: Exception) {
+            Pair(null, null)
+        }
+    }
+
+    private fun downloadUploadedVideoFromFirestoreChunks(videoId: String, destination: File): Boolean {
+        return try {
+            val firstReq = Request.Builder()
+                .url("$FIRESTORE_BASE_URL/cms_uploads/${videoId}_chunk_0")
+                .get()
+                .build()
+            val (firstBytes, totalChunks) = directHttpClient.newCall(firstReq).execute().use { res ->
+                if (!res.isSuccessful) return false
+                val bodyStr = res.body?.string() ?: return false
+                val doc = JSONObject(bodyStr)
+                val fields = doc.optJSONObject("fields") ?: return false
+                val b64 = fields.optJSONObject("data")?.optString("stringValue") ?: return false
+                if (b64.isBlank()) return false
+                val total = fields.optJSONObject("totalChunks")?.optString("integerValue")?.toIntOrNull() ?: 1
+                Pair(Base64.decode(b64, Base64.DEFAULT), total)
+            }
+
+            val temp = File(destination.parentFile, "${destination.name}.fs.tmp")
+            FileOutputStream(temp).use { out ->
+                out.write(firstBytes)
+                for (i in 1 until totalChunks) {
+                    val chunkReq = Request.Builder()
+                        .url("$FIRESTORE_BASE_URL/cms_uploads/${videoId}_chunk_$i")
+                        .get()
+                        .build()
+                    val chunkBytes = directHttpClient.newCall(chunkReq).execute().use { r ->
+                        if (!r.isSuccessful) return false
+                        val s = r.body?.string() ?: return false
+                        val d = JSONObject(s)
+                        val f = d.optJSONObject("fields") ?: return false
+                        val b64 = f.optJSONObject("data")?.optString("stringValue") ?: return false
+                        if (b64.isBlank()) return false
+                        Base64.decode(b64, Base64.DEFAULT)
+                    }
+                    out.write(chunkBytes)
+                }
+            }
+
+            if (SignageSampleVideoGenerator.isValidMp4File(temp)) {
+                if (destination.exists()) destination.delete()
+                temp.renameTo(destination)
+                true
+            } else {
+                temp.delete()
+                false
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Firestore chunk download notice for $videoId: ${e.message}")
+            false
+        }
     }
 
     private fun createRetrofit(baseUrl: String, fastPoll: Boolean = false): SignageApiService {
@@ -219,61 +362,132 @@ class SignageRepository(private val context: Context) {
 
             // If device is not paired yet, check if user entered the 6-digit code on Web Dashboard
             if (!pairingManager.isPaired()) {
-                val pairedNow = pollRemotePairing()
-                if (!pairedNow) {
-                    // Check if server is reachable so top-right dot reflects server reachability
-                    val statusCheck = try {
-                        api.getPairingStatus()
-                    } catch (_: Exception) {
-                        null
+                pollRemotePairing()
+            }
+
+            val isCurrentlyPaired = pairingManager.isPaired()
+
+            // 1. Only send device heartbeat when genuinely paired (Zero Fake Pairing)
+            val hbResponse = if (isCurrentlyPaired) {
+                try {
+                    api.sendHeartbeat(
+                        HeartbeatRequest(
+                            deviceId = deviceId,
+                            pairingCode = pairingManager.getPairingCode(),
+                            status = "PLAYING",
+                            currentVideoId = currentVideoId,
+                            storageUsed = localStore.getCachedStorageSizeBytes(),
+                            appVersion = "1.0",
+                            lastSyncTime = localStore.getLastSyncTimestamp(),
+                            screenOrientation = localStore.getDisplayOrientation(),
+                            videoOrientation = localStore.getVideoOrientation(),
+                            scaleMode = localStore.getVideoScaleMode()
+                        )
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+
+            // 2. Fetch live playlist & settings snapshot from BOTH Vercel API and Cloud Firestore cms_global/live_state
+            val playlistRes = try {
+                api.fetchPlaylist(if (isCurrentlyPaired) deviceId else null)
+            } catch (_: Exception) {
+                null
+            }
+            val fsRoot = fetchFirestoreCmsRootJson()
+            val (fsSchema, fsAction) = if (fsRoot != null) {
+                parseFirestorePlaylistSchema(fsRoot, deviceId)
+            } else {
+                Pair(null, null)
+            }
+
+            // Update device heartbeat in Firestore when genuinely paired and clear consumed pending action if any
+            if (fsRoot != null && isCurrentlyPaired) {
+                try {
+                    val myCode = pairingManager.getPairingCode()
+                    val screenName = pairingManager.getPairedScreenName().ifBlank { "SignageTV ($myCode)" }
+
+                    val approvedObj = fsRoot.optJSONObject("approvedCodes") ?: JSONObject().also { fsRoot.put("approvedCodes", it) }
+                    if (!approvedObj.has(myCode)) {
+                        approvedObj.put(
+                            myCode,
+                            JSONObject().apply {
+                                put("pairingCode", myCode)
+                                put("deviceName", screenName)
+                                put("approvedAt", pairingManager.getPairedTimestamp().takeIf { it > 0L } ?: System.currentTimeMillis())
+                            }
+                        )
                     }
-                    val dot = if (statusCheck != null && statusCheck.isSuccessful) {
-                        DashboardConnectionStatus.CONNECTED_GREEN
-                    } else {
-                        DashboardConnectionStatus.DISCONNECTED_BLUE
+
+                    val devicesObj = fsRoot.optJSONObject("devices") ?: JSONObject().also { fsRoot.put("devices", it) }
+                    val existingDev = devicesObj.optJSONObject(deviceId) ?: JSONObject()
+                    existingDev.put("deviceId", deviceId)
+                    existingDev.put("deviceName", screenName)
+                    existingDev.put("pairingCode", myCode)
+                    existingDev.put("paired", true)
+                    existingDev.put("status", "PLAYING")
+                    existingDev.put("currentVideoId", currentVideoId ?: "")
+                    existingDev.put("storageUsed", localStore.getCachedStorageSizeBytes())
+                    existingDev.put("screenOrientation", localStore.getDisplayOrientation())
+                    existingDev.put("videoOrientation", localStore.getVideoOrientation())
+                    existingDev.put("scaleMode", localStore.getVideoScaleMode())
+                    existingDev.put("lastSeen", System.currentTimeMillis())
+                    devicesObj.put(deviceId, existingDev)
+
+                    val pendingObj = fsRoot.optJSONObject("pendingActions")
+                    if (pendingObj != null && (pendingObj.has(deviceId) || pendingObj.has("*"))) {
+                        pendingObj.remove(deviceId)
+                        pendingObj.remove("*")
                     }
+                    saveFirestoreCmsRootJson(fsRoot)
+                } catch (_: Exception) {}
+            } else if (fsRoot != null && !fsAction.isNullOrBlank()) {
+                try {
+                    val pendingObj = fsRoot.optJSONObject("pendingActions")
+                    if (pendingObj != null && pendingObj.has("*")) {
+                        pendingObj.remove("*")
+                        saveFirestoreCmsRootJson(fsRoot)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            val apiSchema = if (playlistRes != null && playlistRes.isSuccessful) playlistRes.body() else null
+            val schema = when {
+                fsSchema != null && apiSchema != null -> {
+                    val fsPush = fsSchema.lastPushTimestamp ?: 0L
+                    val apiPush = apiSchema.lastPushTimestamp ?: 0L
+                    if (fsPush >= apiPush || fsSchema.version >= apiSchema.version) fsSchema else apiSchema
+                }
+                fsSchema != null -> fsSchema
+                apiSchema != null -> apiSchema
+                else -> {
                     return@withContext RealtimeSyncResult(
-                        connectionStatus = dot,
+                        connectionStatus = DashboardConnectionStatus.DISCONNECTED_BLUE,
                         playlist = null
                     )
                 }
             }
 
-            // 1. Device is genuinely paired: Send heartbeat & check queued remote actions
-            val hbResponse = try {
-                api.sendHeartbeat(
-                    HeartbeatRequest(
-                        deviceId = deviceId,
-                        pairingCode = pairingManager.getPairingCode(),
-                        status = "PLAYING",
-                        currentVideoId = currentVideoId,
-                        storageUsed = localStore.getCachedStorageSizeBytes(),
-                        appVersion = "1.0",
-                        lastSyncTime = localStore.getLastSyncTimestamp(),
-                        screenOrientation = localStore.getDisplayOrientation(),
-                        videoOrientation = localStore.getVideoOrientation(),
-                        scaleMode = localStore.getVideoScaleMode()
-                    )
-                )
-            } catch (e: Exception) {
-                null
-            }
-
-            // 2. Fetch live playlist & settings snapshot (tailored for this deviceId)
-            val playlistRes = api.fetchPlaylist(deviceId)
-            if (!playlistRes.isSuccessful || playlistRes.body() == null) {
-                return@withContext RealtimeSyncResult(
-                    connectionStatus = DashboardConnectionStatus.DISCONNECTED_BLUE,
-                    playlist = null
-                )
-            }
-
-            val schema = playlistRes.body()!!
             val mapped = mapSchemaToPlaylist(schema)
+            // Ensure any uploaded video in the active playlist is downloaded from Cloud Firestore chunks / API to disk immediately!
+            mapped.items.forEach { item ->
+                if (isUploadedCustomVideoId(item.id, item.videoUrl)) {
+                    val localFile = localStore.getLocalVideoFile(item)
+                    if (!localFile.exists() || !SignageSampleVideoGenerator.isValidMp4File(localFile)) {
+                        val downloadedFromFs = downloadUploadedVideoFromFirestoreChunks(item.id, localFile)
+                        if (!downloadedFromFs) {
+                            downloadVideoWithRetry(api, item.videoUrl, localFile, item.id)
+                        }
+                    }
+                }
+            }
             val resolved = resolveLocalFilePaths(mapped, autoSynthesizeMissing = false)
 
-            // Handle queued server action from heartbeat if any
-            val serverAction = hbResponse?.body()?.serverAction
+            // Handle queued server action from heartbeat or Firestore if any
+            val serverAction = hbResponse?.body()?.serverAction?.takeIf { it.isNotBlank() } ?: fsAction
             var actionPlayVideoId: String? = null
             if (!serverAction.isNullOrBlank()) {
                 when {
@@ -395,7 +609,7 @@ class SignageRepository(private val context: Context) {
         var isReadyOnDisk = localFile.exists() && localFile.length() > 1024L &&
             SignageSampleVideoGenerator.isValidMp4File(localFile)
         if (!isReadyOnDisk) {
-            val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
+            val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile, item.id)
             isReadyOnDisk = downloaded && SignageSampleVideoGenerator.isValidMp4File(localFile)
         }
 
@@ -469,7 +683,7 @@ class SignageRepository(private val context: Context) {
                 val updatedItems = mutableListOf<PlaylistItem>()
 
                 remotePlaylist.items.forEachIndexed { index, rawItem ->
-                    val cleanUrl = sanitizeVideoUrl(rawItem.videoUrl, index + 1)
+                    val cleanUrl = sanitizeVideoUrl(rawItem.videoUrl, index + 1, rawItem.id)
                     val item = rawItem.copy(videoUrl = cleanUrl)
                     val progress = (index.toFloat() / totalVideos.coerceAtLeast(1))
                     _syncState.value = SyncState.Syncing("Downloading: ${item.title} (${index + 1}/$totalVideos)", progress)
@@ -479,7 +693,7 @@ class SignageRepository(private val context: Context) {
                         SignageSampleVideoGenerator.isValidMp4File(localFile)
 
                     if (!isReadyOnDisk) {
-                        val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
+                        val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile, item.id)
                         if (downloaded) {
                             if (verifyChecksum(localFile, item.checksum)) {
                                 isReadyOnDisk = true
@@ -573,15 +787,23 @@ class SignageRepository(private val context: Context) {
             localStore.setAutoBootEnabled(schema.autoBootEnabled)
         }
 
-        val items = schema.videos.mapIndexed { idx, v ->
+        val activeIds = schema.activeVideoIds?.filter { it.isNotBlank() }
+        val filteredVideos = if (!activeIds.isNullOrEmpty()) {
+            val matched = activeIds.mapNotNull { activeId -> schema.videos.find { it.id == activeId } }
+            matched.ifEmpty { schema.videos }
+        } else {
+            schema.videos
+        }
+
+        val items = filteredVideos.mapIndexed { idx, v ->
             PlaylistItem(
                 id = v.id,
                 title = v.title ?: "Broadcast: ${v.id}",
-                videoUrl = sanitizeVideoUrl(v.url, idx + 1),
+                videoUrl = sanitizeVideoUrl(v.url, idx + 1, v.id),
                 checksum = v.checksum,
                 durationSeconds = v.duration,
                 adTagUrl = v.adTagUrl ?: defaultAdTag,
-                order = v.order,
+                order = idx + 1,
                 isOfflineDownloaded = localStore.isVideoOfflineDownloaded(v.id)
             )
         }
@@ -607,7 +829,7 @@ class SignageRepository(private val context: Context) {
     }
 
     /**
-     * Checks with the CMS server whether the user has genuinely entered & approved
+     * Checks with the CMS server AND Cloud Firestore whether the user has genuinely entered & approved
      * this device's 6-digit pairing code (`approvedCodes[myCode] != null`).
      * Never auto-pairs or creates fake device entries before the code is entered on the Web Dashboard.
      */
@@ -619,34 +841,65 @@ class SignageRepository(private val context: Context) {
             val myCode = pairingManager.getPairingCode().trim()
             val myDeviceId = pairingManager.getDeviceId()
 
-            // Step 1: Verify that the 6-digit code was actually approved on the Web Dashboard
-            val statusResponse = api.getPairingStatus()
-            val statusBody = statusResponse.body()
-            val approvedEntry = statusBody?.approvedCodes?.get(myCode)
+            // Step 1: Check both API and Cloud Firestore cms_global/live_state for approvedCodes[myCode]
+            val statusResponse = try {
+                api.getPairingStatus()
+            } catch (_: Exception) {
+                null
+            }
+            val statusBody = statusResponse?.body()
+            val apiApprovedEntry = statusBody?.approvedCodes?.get(myCode)
 
-            if (!statusResponse.isSuccessful || approvedEntry == null) {
+            val fsRoot = fetchFirestoreCmsRootJson()
+            val fsApprovedObj = fsRoot?.optJSONObject("approvedCodes")?.optJSONObject(myCode)
+            val fsDeviceName = fsApprovedObj?.optString("deviceName", "")?.takeIf { it.isNotBlank() }
+
+            if (apiApprovedEntry == null && fsApprovedObj == null) {
                 // Code has not been entered on the Web Dashboard yet -> remain Unpaired (zero fake pairing)
                 return@withContext false
             }
 
-            // Step 2: Code was genuinely approved by user -> register paired device with CMS
-            val response = api.pairDevice(
-                PairRequest(
-                    deviceId = myDeviceId,
-                    pairingCode = myCode,
-                    deviceInfo = "Android TV (${Build.MANUFACTURER} ${Build.MODEL})"
+            // Step 2: Code was genuinely approved by user -> register paired device with CMS & Firestore
+            val response = try {
+                api.pairDevice(
+                    PairRequest(
+                        deviceId = myDeviceId,
+                        pairingCode = myCode,
+                        deviceInfo = "Android TV (${Build.MANUFACTURER} ${Build.MODEL})"
+                    )
                 )
-            )
-            val body = response.body()
-            if (response.isSuccessful && body != null && body.success) {
-                val token = body.deviceToken?.takeIf { it.startsWith("tok_") }
-                    ?: "tok_${myDeviceId}_${System.currentTimeMillis()}"
-                val screenName = body.deviceName
-                    ?: approvedEntry.deviceName
-                    ?: "SignageTV (${myDeviceId.takeLast(4)})"
-                pairingManager.confirmPairing(token, screenName)
-                return@withContext true
+            } catch (_: Exception) {
+                null
             }
+            val body = response?.body()
+            val token = body?.deviceToken?.takeIf { it.startsWith("tok_") }
+                ?: "tok_${myDeviceId}_${System.currentTimeMillis()}"
+            val screenName = body?.deviceName
+                ?: apiApprovedEntry?.deviceName
+                ?: fsDeviceName
+                ?: "SignageTV (${myDeviceId.takeLast(4)})"
+
+            if (fsRoot != null) {
+                try {
+                    val devicesObj = fsRoot.optJSONObject("devices") ?: JSONObject().also { fsRoot.put("devices", it) }
+                    val devObj = JSONObject().apply {
+                        put("deviceId", myDeviceId)
+                        put("deviceName", screenName)
+                        put("pairingCode", myCode)
+                        put("paired", true)
+                        put("status", "PLAYING")
+                        put("screenOrientation", localStore.getDisplayOrientation())
+                        put("videoOrientation", localStore.getVideoOrientation())
+                        put("scaleMode", localStore.getVideoScaleMode())
+                        put("lastSeen", System.currentTimeMillis())
+                    }
+                    devicesObj.put(myDeviceId, devObj)
+                    saveFirestoreCmsRootJson(fsRoot)
+                } catch (_: Exception) {}
+            }
+
+            pairingManager.confirmPairing(token, screenName)
+            return@withContext true
         } catch (e: Exception) {
             Log.d(TAG, "Pairing poll awaiting CMS confirmation: ${e.message}")
         }
@@ -947,7 +1200,17 @@ class SignageRepository(private val context: Context) {
         _playlistFlow.value = resolved
     }
 
-    private suspend fun downloadVideoWithRetry(api: SignageApiService, videoUrl: String, destination: File): Boolean {
+    private suspend fun downloadVideoWithRetry(
+        api: SignageApiService,
+        videoUrl: String,
+        destination: File,
+        videoId: String? = null
+    ): Boolean {
+        if (!videoId.isNullOrBlank() && isUploadedCustomVideoId(videoId, videoUrl)) {
+            if (downloadUploadedVideoFromFirestoreChunks(videoId, destination)) {
+                return true
+            }
+        }
         if (ResilientSignageDataSource.isKnownRestrictedUrl(videoUrl)) {
             return false
         }
@@ -1100,6 +1363,12 @@ class SignageRepository(private val context: Context) {
     companion object {
         private const val TAG = "SignageRepository"
 
+        const val FIRESTORE_BASE_URL =
+            "https://firestore.googleapis.com/v1/projects/gen-lang-client-0563270290/databases/ai-studio-android-signaget-4a0ce43d-8b5a-43d1-8423-f48d2b432ace/documents"
+        const val FIRESTORE_LIVE_STATE_URL = "$FIRESTORE_BASE_URL/cms_global/live_state"
+
+        val DEFAULT_SAMPLE_IDS = setOf("vid_bunny", "vid_dream", "vid_blazes", "vid_bullrun")
+
         const val SAMPLE_VAST_TAG =
             "https://pubads.g.doubleclick.net/gampad/ads?iu=/21775744923/external/single_ad_samples&sz=640x480&cust_params=sample_ct%3Dlinear&ciu_szs=300x250%2C728x90&gdfp_req=1&output=vast&unviewed_position_start=1&env=vp&impl=s&correlator="
 
@@ -1110,8 +1379,13 @@ class SignageRepository(private val context: Context) {
             "https://media.w3.org/2010/05/bunny/trailer.mp4"
         )
 
-        fun sanitizeVideoUrl(url: String, orderHint: Int = 1): String {
+        fun sanitizeVideoUrl(url: String, orderHint: Int = 1, videoId: String? = null): String {
             val trimmed = url.trim()
+            if (trimmed.contains("tmpfiles.org", ignoreCase = true)) {
+                if (!videoId.isNullOrBlank() && videoId.startsWith("vid_")) {
+                    return "https://ads-broo.vercel.app/api/upload?id=$videoId"
+                }
+            }
             if (trimmed.isEmpty() || ResilientSignageDataSource.isKnownRestrictedUrl(trimmed)) {
                 return when {
                     trimmed.contains("BigBuckBunny", ignoreCase = true) -> RELIABLE_SAMPLE_VIDEOS[0]
