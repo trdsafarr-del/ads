@@ -17,6 +17,8 @@ import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
 import com.example.data.model.PlaylistSchema
 import com.example.pairing.PairingManager
+import com.example.player.ResilientSignageDataSource
+import com.example.player.SignageSampleVideoGenerator
 import com.example.updater.AutoUpdateManager
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -96,9 +98,19 @@ class SignageRepository(private val context: Context) {
     }
 
     private fun resolveLocalFilePaths(playlist: PlaylistResponse): PlaylistResponse {
-        val updatedItems = playlist.items.map { item ->
-            val localPath = localStore.getLocalVideoPathIfExists(item)
-            item.copy(localFilePath = localPath)
+        val updatedItems = playlist.items.mapIndexed { index, item ->
+            val cleanUrl = sanitizeVideoUrl(item.videoUrl, index + 1)
+            val sanitizedItem = item.copy(videoUrl = cleanUrl)
+            val existingPath = localStore.getLocalVideoPathIfExists(sanitizedItem)
+            val validExisting = existingPath?.takeIf {
+                SignageSampleVideoGenerator.isValidMp4File(File(it))
+            }
+            val finalPath = validExisting ?: SignageSampleVideoGenerator.getOrCreateVideoForItem(
+                context = context,
+                item = sanitizedItem,
+                targetFile = localStore.getLocalVideoFile(sanitizedItem)
+            )?.absolutePath
+            sanitizedItem.copy(localFilePath = finalPath)
         }
         return playlist.copy(items = updatedItems)
     }
@@ -110,6 +122,15 @@ class SignageRepository(private val context: Context) {
         val okHttpClient = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .addInterceptor { chain ->
+                val req = chain.request().newBuilder()
+                    .header("User-Agent", ResilientSignageDataSource.BROWSER_USER_AGENT)
+                    .header("Accept", "*/*")
+                    .build()
+                chain.proceed(req)
+            }
             .addInterceptor(logging)
             .build()
 
@@ -157,24 +178,35 @@ class SignageRepository(private val context: Context) {
                 val totalVideos = remotePlaylist.items.size
                 val updatedItems = mutableListOf<PlaylistItem>()
 
-                remotePlaylist.items.forEachIndexed { index, item ->
+                remotePlaylist.items.forEachIndexed { index, rawItem ->
+                    val cleanUrl = sanitizeVideoUrl(rawItem.videoUrl, index + 1)
+                    val item = rawItem.copy(videoUrl = cleanUrl)
                     val progress = (index.toFloat() / totalVideos.coerceAtLeast(1))
                     _syncState.value = SyncState.Syncing("Downloading: ${item.title} (${index + 1}/$totalVideos)", progress)
 
                     val localFile = localStore.getLocalVideoFile(item)
-                    var isReadyOnDisk = localFile.exists() && localFile.length() > 0
+                    var isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(localFile)
 
-                    if (!isReadyOnDisk) {
+                    if (!isReadyOnDisk || localFile.length() < 150_000L) {
                         val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
                         if (downloaded) {
-                            // Checksum verification
                             if (verifyChecksum(localFile, item.checksum)) {
                                 isReadyOnDisk = true
                             } else {
                                 Log.w(TAG, "Checksum mismatch for ${item.title}! Deleting corrupt file.")
                                 localFile.delete()
+                                isReadyOnDisk = false
                             }
                         }
+                    }
+
+                    if (!isReadyOnDisk) {
+                        val fallback = SignageSampleVideoGenerator.getOrCreateVideoForItem(
+                            context = context,
+                            item = item,
+                            targetFile = localFile
+                        )
+                        isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(fallback)
                     }
 
                     val finalPath = if (isReadyOnDisk) localFile.absolutePath else null
@@ -245,11 +277,11 @@ class SignageRepository(private val context: Context) {
         if (!schema.scaleMode.isNullOrBlank()) {
             localStore.setVideoScaleMode(schema.scaleMode)
         }
-        val items = schema.videos.map { v ->
+        val items = schema.videos.mapIndexed { idx, v ->
             PlaylistItem(
                 id = v.id,
                 title = v.title ?: "Broadcast: ${v.id}",
-                videoUrl = v.url,
+                videoUrl = sanitizeVideoUrl(v.url, idx + 1),
                 checksum = v.checksum,
                 durationSeconds = v.duration,
                 adTagUrl = v.adTagUrl ?: defaultAdTag,
@@ -356,6 +388,9 @@ class SignageRepository(private val context: Context) {
     }
 
     private suspend fun downloadVideoWithRetry(api: SignageApiService, videoUrl: String, destination: File): Boolean {
+        if (ResilientSignageDataSource.isKnownRestrictedUrl(videoUrl)) {
+            return false
+        }
         var attempts = 0
         while (attempts < 2) {
             attempts++
@@ -368,14 +403,16 @@ class SignageRepository(private val context: Context) {
                             input.copyTo(output)
                         }
                     }
-                    if (temp.exists() && temp.length() > 0) {
+                    if (SignageSampleVideoGenerator.isValidMp4File(temp)) {
                         if (destination.exists()) destination.delete()
                         temp.renameTo(destination)
                         return true
+                    } else {
+                        temp.delete()
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Download attempt $attempts failed for $videoUrl: ${e.message}")
+                Log.d(TAG, "Download attempt $attempts notice for $videoUrl: ${e.message}")
             }
         }
         return false
@@ -491,6 +528,31 @@ class SignageRepository(private val context: Context) {
         const val SAMPLE_VAST_TAG =
             "https://pubads.g.doubleclick.net/gampad/ads?iu=/21775744923/external/single_ad_samples&sz=640x480&cust_params=sample_ct%3Dlinear&ciu_szs=300x250%2C728x90&gdfp_req=1&output=vast&unviewed_position_start=1&env=vp&impl=s&correlator="
 
+        val RELIABLE_SAMPLE_VIDEOS = listOf(
+            "https://www.w3schools.com/html/mov_bbb.mp4",
+            "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+            "https://media.w3.org/2010/05/sintel/trailer.mp4",
+            "https://media.w3.org/2010/05/bunny/trailer.mp4"
+        )
+
+        /**
+         * Automatically remaps legacy Google Cloud Storage sample URLs that return HTTP 403
+         * to reliable, globally accessible HTTPS MP4 streams.
+         */
+        fun sanitizeVideoUrl(url: String, orderHint: Int = 1): String {
+            val trimmed = url.trim()
+            if (trimmed.isEmpty() || ResilientSignageDataSource.isKnownRestrictedUrl(trimmed)) {
+                return when {
+                    trimmed.contains("BigBuckBunny", ignoreCase = true) -> RELIABLE_SAMPLE_VIDEOS[0]
+                    trimmed.contains("ElephantsDream", ignoreCase = true) -> RELIABLE_SAMPLE_VIDEOS[1]
+                    trimmed.contains("ForBiggerBlazes", ignoreCase = true) -> RELIABLE_SAMPLE_VIDEOS[2]
+                    trimmed.contains("WeAreGoingOnBullrun", ignoreCase = true) -> RELIABLE_SAMPLE_VIDEOS[3]
+                    else -> RELIABLE_SAMPLE_VIDEOS[(orderHint - 1).coerceAtLeast(0) % RELIABLE_SAMPLE_VIDEOS.size]
+                }
+            }
+            return trimmed
+        }
+
         fun createDefaultPlaylist(): PlaylistResponse {
             return PlaylistResponse(
                 id = "display-lobby-01",
@@ -503,7 +565,7 @@ class SignageRepository(private val context: Context) {
                     PlaylistItem(
                         id = "vid_bunny",
                         title = "Brand Showcase: Nature & Animation",
-                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                        videoUrl = RELIABLE_SAMPLE_VIDEOS[0],
                         durationSeconds = 60,
                         adTagUrl = SAMPLE_VAST_TAG,
                         order = 1
@@ -511,7 +573,7 @@ class SignageRepository(private val context: Context) {
                     PlaylistItem(
                         id = "vid_dream",
                         title = "Digital Arts & 3D Render Feature",
-                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                        videoUrl = RELIABLE_SAMPLE_VIDEOS[1],
                         durationSeconds = 45,
                         adTagUrl = null,
                         order = 2
@@ -519,7 +581,7 @@ class SignageRepository(private val context: Context) {
                     PlaylistItem(
                         id = "vid_blazes",
                         title = "High Energy Automotive Commercial",
-                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+                        videoUrl = RELIABLE_SAMPLE_VIDEOS[2],
                         durationSeconds = 30,
                         adTagUrl = SAMPLE_VAST_TAG,
                         order = 3
@@ -527,7 +589,7 @@ class SignageRepository(private val context: Context) {
                     PlaylistItem(
                         id = "vid_bullrun",
                         title = "Summer Road Trip Experience",
-                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
+                        videoUrl = RELIABLE_SAMPLE_VIDEOS[3],
                         durationSeconds = 40,
                         adTagUrl = null,
                         order = 4

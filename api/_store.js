@@ -31,7 +31,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_bunny',
         title: 'Brand Showcase: Nature & Animation',
-        url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+        url: 'https://www.w3schools.com/html/mov_bbb.mp4',
         order: 1,
         duration: 60,
         checksum: null,
@@ -40,7 +40,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_dream',
         title: 'Digital Arts & 3D Render Feature',
-        url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+        url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
         order: 2,
         duration: 45,
         checksum: null,
@@ -49,7 +49,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_blazes',
         title: 'High Energy Automotive Commercial',
-        url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        url: 'https://media.w3.org/2010/05/sintel/trailer.mp4',
         order: 3,
         duration: 30,
         checksum: null,
@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_bullrun',
         title: 'Summer Road Trip Experience',
-        url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4',
+        url: 'https://media.w3.org/2010/05/bunny/trailer.mp4',
         order: 4,
         duration: 40,
         checksum: null,
@@ -71,12 +71,26 @@ const DEFAULT_STATE = {
   queuedActions: {}
 };
 
+const RELIABLE_URLS = [
+  'https://www.w3schools.com/html/mov_bbb.mp4',
+  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+  'https://media.w3.org/2010/05/sintel/trailer.mp4',
+  'https://media.w3.org/2010/05/bunny/trailer.mp4'
+];
+
+function sanitizeUrl(url, index) {
+  if (!url || String(url).includes('commondatastorage.googleapis.com/gtv-videos-bucket')) {
+    return RELIABLE_URLS[index % RELIABLE_URLS.length];
+  }
+  return url;
+}
+
 function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
       const raw = fs.readFileSync(STATE_FILE, 'utf8');
       const parsed = JSON.parse(raw);
-      return {
+      const merged = {
         ...DEFAULT_STATE,
         ...parsed,
         playlist: {
@@ -84,6 +98,13 @@ function loadState() {
           ...(parsed.playlist || {})
         }
       };
+      if (Array.isArray(merged.playlist.videos)) {
+        merged.playlist.videos = merged.playlist.videos.map((v, idx) => ({
+          ...v,
+          url: sanitizeUrl(v.url, idx)
+        }));
+      }
+      return merged;
     }
   } catch (e) {
     // fallback to default state
