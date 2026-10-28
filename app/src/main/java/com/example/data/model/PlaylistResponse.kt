@@ -12,6 +12,7 @@ data class PlaylistResponse(
     @Json(name = "defaultAdTagUrl") val defaultAdTagUrl: String? = null,
     @Json(name = "tickerText") val tickerText: String? = null,
     @Json(name = "orientation") val orientation: String? = null,
+    @Json(name = "videoOrientation") val videoOrientation: Int = 0,
     @Json(name = "scaleMode") val scaleMode: String? = null,
     @Json(name = "tickerEnabled") val tickerEnabled: Boolean? = null,
     @Json(name = "isMuted") val isMuted: Boolean? = null,

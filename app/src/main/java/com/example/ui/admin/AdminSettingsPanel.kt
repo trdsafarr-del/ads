@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -85,6 +86,7 @@ import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
 import com.example.kiosk.KioskPermissionHelper
 import com.example.ui.orientation.SignageOrientation
+import com.example.ui.orientation.VideoOrientation
 import com.example.ui.theme.AmberAccent
 import com.example.ui.theme.CoralRed
 import com.example.ui.theme.ElectricBlue
@@ -103,8 +105,19 @@ import java.util.Locale
 @Composable
 fun AdminSettingsPanel(
     playlist: PlaylistResponse,
+    deviceId: String = "",
+    pairingCode: String = "",
+    isPaired: Boolean = false,
+    pairedScreenName: String = "",
+    pairedAtTimestamp: Long = 0L,
+    pairingStatusMessage: String = "",
+    onVerifyPairingNow: () -> Unit = {},
+    onRegeneratePairingCode: () -> Unit = {},
+    onUnpairDevice: () -> Unit = {},
     currentOrientation: SignageOrientation,
     onSelectOrientation: (SignageOrientation) -> Unit,
+    currentVideoOrientation: VideoOrientation = VideoOrientation.NORMAL_0,
+    onSelectVideoOrientation: (VideoOrientation) -> Unit = {},
     currentScaleMode: String,
     onSelectScaleMode: (String) -> Unit,
     isKioskLocked: Boolean,
@@ -264,6 +277,212 @@ fun AdminSettingsPanel(
                     .fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // SECTION 0: DEVICE PAIRING CODE & REAL PAIRING STATUS
+                item {
+                    AdminSectionCard(title = "Device Pairing Code & Live 5s Sync Status") {
+                        val badgeColor = if (isPaired) EmeraldGreen else AmberAccent
+                        val statusBadgeText = if (isPaired) {
+                            "✔ PAIRED WITH WEB DASHBOARD"
+                        } else {
+                            "● UNPAIRED — ENTER 6-DIGIT CODE ON WEB DASHBOARD"
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(SignageSurface, RoundedCornerShape(10.dp))
+                                .border(1.5.dp, badgeColor.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                                .padding(12.dp)
+                                .testTag("admin_pairing_status_card")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(badgeColor.copy(alpha = 0.16f), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = statusBadgeText,
+                                        color = badgeColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+
+                                Text(
+                                    text = "Live Sync: Every 5s",
+                                    color = NeonCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 6-Digit Pairing Code Display
+                            Text(
+                                text = if (isPaired) "Paired 6-Digit Device Code:" else "Your 6-Digit Device Pair Code:",
+                                color = TextSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            val displayCode = pairingCode.padEnd(6, '0').take(6)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                displayCode.forEach { digit ->
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .background(SignageDarkBg, RoundedCornerShape(8.dp))
+                                            .border(
+                                                1.5.dp,
+                                                if (isPaired) EmeraldGreen else NeonCyan,
+                                                RoundedCornerShape(8.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = digit.toString(),
+                                            color = if (isPaired) EmeraldGreen else NeonCyan,
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = "Device ID: $deviceId",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+
+                            if (isPaired) {
+                                val pairedTimeStr = if (pairedAtTimestamp > 0L) {
+                                    SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault()).format(Date(pairedAtTimestamp))
+                                } else "Verified"
+                                Text(
+                                    text = "Paired Screen: ${pairedScreenName.ifBlank { deviceId }} • Paired At: $pairedTimeStr",
+                                    color = EmeraldGreen,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = pairingStatusMessage.ifBlank {
+                                        "Enter code $displayCode on https://ads-broo.vercel.app/ to pair this TV."
+                                    },
+                                    color = AmberAccent,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (isPaired) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = onTriggerSync,
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Sync Paired TV Now",
+                                            color = Color.Black,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = onUnpairDevice,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("admin_unpair_device_button")
+                                    ) {
+                                        Text(
+                                            text = "Unpair Device",
+                                            color = CoralRed,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = onVerifyPairingNow,
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("admin_verify_pairing_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Verify Pairing Now",
+                                            color = Color.Black,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = onRegeneratePairingCode,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("admin_new_pair_code_button")
+                                    ) {
+                                        Text(
+                                            text = "New 6-Digit Code",
+                                            color = NeonCyan,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // SECTION 1: 24x7 KIOSK PERMISSIONS & DIRECT SETTINGS REDIRECTS
                 item {
                     AdminSectionCard(title = "24x7 Kiosk Permissions & Default Launcher Setup") {
@@ -525,15 +744,47 @@ fun AdminSettingsPanel(
                     }
                 }
 
-                // SECTION 2: DISPLAY ORIENTATION (LANDSCAPE & PORTRAIT)
+                // SECTION 2: PER-DEVICE SCREEN ORIENTATION & VIDEO ORIENTATION
                 item {
-                    AdminSectionCard(title = "Display Orientation (Landscape / Portrait)") {
+                    AdminSectionCard(title = "Per-Device Screen & Video Orientation") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(SignageSurface, RoundedCornerShape(8.dp))
+                                .border(1.dp, NeonCyan.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Device: ${deviceId.ifBlank { "SignageTV" }}",
+                                color = NeonCyan,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "SCR: ${currentOrientation.id} • VID: ${currentVideoOrientation.degrees}°",
+                                color = EmeraldGreen,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 1. SCREEN ORIENTATION (Android OS / UI Rotation)
                         Text(
-                            text = "Select screen rotation (Supports Horizontal 16:9 TV & Vertical 9:16 Totem):",
-                            color = TextSecondary,
-                            fontSize = 11.sp
+                            text = "1. Screen Orientation (Android OS & UI Rotation for this TV):",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Rotates the entire TV screen & overlay UI (16:9 Horizontal or 9:16 Vertical Totem):",
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             SignageOrientation.entries.forEach { orientation ->
@@ -552,6 +803,7 @@ fun AdminSettingsPanel(
                                         )
                                         .clickable { onSelectOrientation(orientation) }
                                         .padding(10.dp)
+                                        .testTag("screen_orientation_${orientation.id}")
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -597,10 +849,94 @@ fun AdminSettingsPanel(
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(color = SignageSurfaceVariant)
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        // 2. VIDEO ORIENTATION (Independent Video Player Rotation: 0°, 90°, 180°, 270°)
                         Text(
-                            text = "Video Scaling on Vertical/Horizontal Screen:",
+                            text = "2. Video Orientation (Independent Video Player Rotation for this TV):",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Rotates the video playback canvas directly (0°, 90° Right, 180° Flip, 270° Left) — works even on HDMI boxes that lock OS rotation:",
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            VideoOrientation.entries.forEach { vo ->
+                                val isSelected = (vo == currentVideoOrientation)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            if (isSelected) EmeraldGreen.copy(alpha = 0.16f) else SignageSurface,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) EmeraldGreen else Color.Transparent,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { onSelectVideoOrientation(vo) }
+                                        .padding(10.dp)
+                                        .testTag("video_orientation_${vo.degrees}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = if (vo == VideoOrientation.ROTATE_90 || vo == VideoOrientation.ROTATE_270)
+                                                        Icons.Default.StayCurrentPortrait
+                                                    else Icons.Default.StayCurrentLandscape,
+                                                    contentDescription = null,
+                                                    tint = if (isSelected) EmeraldGreen else TextSecondary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = vo.title,
+                                                    color = if (isSelected) EmeraldGreen else Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                )
+                                            }
+                                            Text(
+                                                text = vo.description,
+                                                color = TextMuted,
+                                                fontSize = 10.sp,
+                                                modifier = Modifier.padding(start = 24.dp, top = 2.dp)
+                                            )
+                                        }
+
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = "Selected",
+                                                tint = EmeraldGreen,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(color = SignageSurfaceVariant)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // 3. VIDEO SCALING MODE
+                        Text(
+                            text = "3. Video Aspect Scaling Mode:",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -629,7 +965,8 @@ fun AdminSettingsPanel(
                                             RoundedCornerShape(8.dp)
                                         )
                                         .clickable { onSelectScaleMode(mode) }
-                                        .padding(8.dp),
+                                        .padding(8.dp)
+                                        .testTag("video_scale_mode_$mode"),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

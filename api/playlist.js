@@ -7,18 +7,30 @@ module.exports = (req, res) => {
   }
 
   const state = loadState();
+  state.devices = state.devices || {};
 
   if (req.method === 'GET') {
     const deviceId = req.query && req.query.deviceId;
-    if (deviceId) {
+    if (deviceId && state.devices[deviceId] && state.devices[deviceId].paired) {
+      const dev = state.devices[deviceId];
       state.devices[deviceId] = {
-        ...(state.devices[deviceId] || {}),
-        deviceId,
+        ...dev,
         lastPlaylistFetch: Date.now(),
-        lastSeen: Date.now(),
-        status: (state.devices[deviceId] && state.devices[deviceId].status) || 'ONLINE'
+        lastSeen: Date.now()
       };
       saveState(state);
+
+      // Return playlist tailored with this specific device's Screen Orientation, Video Orientation & Scale Mode
+      const devicePlaylist = {
+        ...state.playlist,
+        orientation: dev.screenOrientation || state.playlist.orientation || 'LANDSCAPE',
+        videoOrientation:
+          dev.videoOrientation !== undefined && dev.videoOrientation !== null
+            ? Number(dev.videoOrientation)
+            : Number(state.playlist.videoOrientation) || 0,
+        scaleMode: dev.scaleMode || state.playlist.scaleMode || 'ZOOM'
+      };
+      return res.status(200).json(devicePlaylist);
     }
     return res.status(200).json(state.playlist);
   }
@@ -26,6 +38,30 @@ module.exports = (req, res) => {
   if (req.method === 'POST') {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const current = state.playlist;
+
+    // Support per-device orientation updates from Android TV or Web Dashboard
+    if (body.deviceId && state.devices[body.deviceId]) {
+      const dev = state.devices[body.deviceId];
+      if (typeof body.orientation === 'string' && body.orientation.trim() !== '') {
+        dev.screenOrientation = body.orientation.trim();
+      }
+      if (body.videoOrientation !== undefined && body.videoOrientation !== null) {
+        dev.videoOrientation = Number(body.videoOrientation) || 0;
+      }
+      if (typeof body.scaleMode === 'string' && body.scaleMode.trim() !== '') {
+        dev.scaleMode = body.scaleMode.trim();
+      }
+      dev.lastSeen = Date.now();
+      state.devices[body.deviceId] = dev;
+      current.version = (Number(current.version) || 1) + 1;
+      state.playlist = current;
+      saveState(state);
+      return res.status(200).json({
+        success: true,
+        device: dev,
+        playlist: state.playlist
+      });
+    }
 
     // Support adding/pushing a single video directly from Android or Web
     if (body.action === 'addSingleVideo' && body.video) {
@@ -61,6 +97,10 @@ module.exports = (req, res) => {
 
     if (typeof body.orientation === 'string') {
       current.orientation = body.orientation;
+    }
+
+    if (body.videoOrientation !== undefined && body.videoOrientation !== null) {
+      current.videoOrientation = Number(body.videoOrientation) || 0;
     }
 
     if (typeof body.scaleMode === 'string') {

@@ -11,6 +11,7 @@ import com.example.data.repository.DashboardConnectionStatus
 import com.example.data.repository.SignageRepository
 import com.example.data.repository.SyncState
 import com.example.pairing.PairingState
+import com.example.service.WatchdogService
 import com.example.sync.PlaylistSyncWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -37,12 +38,17 @@ data class SignageUiState(
     val apiServerUrl: String = "",
     val deviceId: String = "",
     val pairingCode: String = "",
-    val isPaired: Boolean = true,
+    val isPaired: Boolean = false,
+    val pairedScreenName: String = "",
+    val pairedAtTimestamp: Long = 0L,
+    val pairingStatusMessage: String = "Enter 6-digit code on Web Dashboard to pair",
+    val isCheckingPairing: Boolean = false,
     val ipAddress: String = "127.0.0.1",
     val recentLogs: List<DeviceLogEntity> = emptyList(),
     val burnInShiftX: Float = 0f,
     val burnInShiftY: Float = 0f,
     val displayOrientation: com.example.ui.orientation.SignageOrientation = com.example.ui.orientation.SignageOrientation.LANDSCAPE,
+    val videoOrientation: com.example.ui.orientation.VideoOrientation = com.example.ui.orientation.VideoOrientation.NORMAL_0,
     val videoScaleMode: String = "ZOOM",
     val connectionStatus: DashboardConnectionStatus = DashboardConnectionStatus.CONNECTED_GREEN,
     val pendingOfflinePopupVideo: PlaylistItem? = null,
@@ -78,8 +84,16 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             deviceId = pairingManager.getDeviceId(),
             pairingCode = pairingManager.getPairingCode(),
             isPaired = pairingManager.isPaired(),
+            pairedScreenName = pairingManager.getPairedScreenName(),
+            pairedAtTimestamp = pairingManager.getPairedTimestamp(),
+            pairingStatusMessage = if (pairingManager.isPaired()) {
+                "✔ Paired with CMS (${pairingManager.getPairedScreenName()})"
+            } else {
+                "Waiting for 6-digit code ${pairingManager.getPairingCode()} on Web Dashboard..."
+            },
             ipAddress = getLocalIpAddress(),
             displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
+            videoOrientation = com.example.ui.orientation.VideoOrientation.fromDegrees(localStore.getVideoOrientation()),
             videoScaleMode = localStore.getVideoScaleMode(),
             connectionStatus = if (repository.hasInternetConnection()) {
                 DashboardConnectionStatus.CONNECTED_GREEN
@@ -104,14 +118,21 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
                     is PairingState.Paired -> {
                         _uiState.value = _uiState.value.copy(
                             isPaired = true,
-                            deviceId = state.deviceId
+                            deviceId = state.deviceId,
+                            pairingCode = state.pairingCode,
+                            pairedScreenName = state.screenName,
+                            pairedAtTimestamp = state.pairedAtTimestamp,
+                            pairingStatusMessage = "✔ Paired with CMS (${state.screenName})"
                         )
                     }
                     is PairingState.Unpaired -> {
                         _uiState.value = _uiState.value.copy(
                             isPaired = false,
                             deviceId = state.deviceId,
-                            pairingCode = state.pairingCode
+                            pairingCode = state.pairingCode,
+                            pairedScreenName = "",
+                            pairedAtTimestamp = 0L,
+                            pairingStatusMessage = "Waiting for code ${state.pairingCode} on Web Dashboard..."
                         )
                     }
                 }
@@ -120,36 +141,57 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Real-time 3-second polling loop that:
-     * 1. Updates Top-Right Connection Dot (Green = Connected, Red = Offline, Blue = Internet but Disconnected).
-     * 2. Applies any Web Dashboard settings changes immediately to the Android app.
-     * 3. Triggers the "Download for Offline" popup whenever a new video is uploaded.
-     * 4. Auto-plays newly pushed videos immediately.
+     * Live 5-second background sync loop (runs when internet is ON):
+     * 1. Checks internet connectivity first. If offline -> Red dot (no network traffic).
+     * 2. If online -> runs every 5 seconds in background (Dispatchers.IO):
+     *    - Checks 6-digit pairing confirmation when unpaired.
+     *    - Syncs Web Dashboard settings, playlist, offline download requests, and auto-play pushes when paired.
      */
     private fun startRealtimeDashboardSyncLoop() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             while (true) {
-                val result = repository.pollRealtimeDashboardSync(activePlayingVideoId)
-                val currentPopup = _uiState.value.pendingOfflinePopupVideo
-                val nextPopup = currentPopup ?: result.newlyUploadedVideoForPopup
-                val nextAutoPlay = result.pushedVideoIdToAutoPlay ?: _uiState.value.pushedVideoIdToAutoPlay
+                if (!repository.hasInternetConnection()) {
+                    _uiState.value = _uiState.value.copy(
+                        connectionStatus = DashboardConnectionStatus.OFFLINE_RED
+                    )
+                } else {
+                    WatchdogService.notifyUiSynced()
+                    val wasPairedBefore = _uiState.value.isPaired
+                    val result = repository.pollRealtimeDashboardSync(activePlayingVideoId)
+                    val isPairedNow = pairingManager.isPaired()
 
-                _uiState.value = _uiState.value.copy(
-                    connectionStatus = result.connectionStatus,
-                    displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
-                    videoScaleMode = localStore.getVideoScaleMode(),
-                    isTickerEnabled = localStore.isTickerEnabled(),
-                    isPlayerMuted = localStore.isPlayerMuted(),
-                    isKioskLocked = localStore.isKioskModeLocked(),
-                    isAutoBootEnabled = localStore.isAutoBootEnabled(),
-                    cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
-                    lastSyncStatus = localStore.getLastSyncStatus(),
-                    lastSyncTimestamp = localStore.getLastSyncTimestamp(),
-                    pendingOfflinePopupVideo = nextPopup,
-                    pushedVideoIdToAutoPlay = nextAutoPlay
-                )
+                    val currentPopup = _uiState.value.pendingOfflinePopupVideo
+                    val nextPopup = currentPopup ?: result.newlyUploadedVideoForPopup
+                    val nextAutoPlay = result.pushedVideoIdToAutoPlay ?: _uiState.value.pushedVideoIdToAutoPlay
 
-                delay(3_000L)
+                    _uiState.value = _uiState.value.copy(
+                        connectionStatus = result.connectionStatus,
+                        isPaired = isPairedNow,
+                        deviceId = pairingManager.getDeviceId(),
+                        pairingCode = pairingManager.getPairingCode(),
+                        pairedScreenName = pairingManager.getPairedScreenName(),
+                        pairedAtTimestamp = pairingManager.getPairedTimestamp(),
+                        displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
+                        videoOrientation = com.example.ui.orientation.VideoOrientation.fromDegrees(localStore.getVideoOrientation()),
+                        videoScaleMode = localStore.getVideoScaleMode(),
+                        isTickerEnabled = localStore.isTickerEnabled(),
+                        isPlayerMuted = localStore.isPlayerMuted(),
+                        isKioskLocked = localStore.isKioskModeLocked(),
+                        isAutoBootEnabled = localStore.isAutoBootEnabled(),
+                        cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
+                        lastSyncStatus = localStore.getLastSyncStatus(),
+                        lastSyncTimestamp = localStore.getLastSyncTimestamp(),
+                        pendingOfflinePopupVideo = nextPopup,
+                        pushedVideoIdToAutoPlay = nextAutoPlay
+                    )
+
+                    if (!wasPairedBefore && isPairedNow) {
+                        triggerCloudSync()
+                    }
+                }
+
+                // Live sync every 5 seconds in background
+                delay(5_000L)
             }
         }
     }
@@ -196,11 +238,58 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
 
     fun pollPairingStatus() {
         viewModelScope.launch {
+            if (!repository.hasInternetConnection()) {
+                _uiState.value = _uiState.value.copy(
+                    connectionStatus = DashboardConnectionStatus.OFFLINE_RED,
+                    pairingStatusMessage = "Offline: Connect to internet to verify 6-digit code ${pairingManager.getPairingCode()}"
+                )
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(
+                isCheckingPairing = true,
+                pairingStatusMessage = "Checking CMS for 6-digit code ${pairingManager.getPairingCode()}..."
+            )
             val paired = repository.pollRemotePairing()
             if (paired || pairingManager.isPaired()) {
-                _uiState.value = _uiState.value.copy(isPaired = true)
+                _uiState.value = _uiState.value.copy(
+                    isCheckingPairing = false,
+                    isPaired = true,
+                    pairedScreenName = pairingManager.getPairedScreenName(),
+                    pairedAtTimestamp = pairingManager.getPairedTimestamp(),
+                    pairingStatusMessage = "✔ Paired with CMS (${pairingManager.getPairedScreenName()})"
+                )
                 triggerCloudSync()
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isCheckingPairing = false,
+                    isPaired = false,
+                    pairingStatusMessage = "Awaiting approval: Enter code ${pairingManager.getPairingCode()} on Web Dashboard & click 'Pair TV Now'"
+                )
             }
+        }
+    }
+
+    fun regeneratePairingCode() {
+        val newCode = pairingManager.regeneratePairingCode()
+        _uiState.value = _uiState.value.copy(
+            isPaired = false,
+            pairingCode = newCode,
+            pairedScreenName = "",
+            pairedAtTimestamp = 0L,
+            pairingStatusMessage = "New 6-digit code generated: $newCode — Enter on Web Dashboard"
+        )
+    }
+
+    fun unpairDevice() {
+        viewModelScope.launch {
+            val newCode = repository.unpairDeviceFromCms()
+            _uiState.value = _uiState.value.copy(
+                isPaired = false,
+                pairingCode = newCode,
+                pairedScreenName = "",
+                pairedAtTimestamp = 0L,
+                pairingStatusMessage = "Device Unpaired. Enter new 6-digit code $newCode on Web Dashboard to pair."
+            )
         }
     }
 
@@ -307,16 +396,6 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun skipPairingForDemo() {
-        pairingManager.skipPairingForStandaloneDemo()
-        _uiState.value = _uiState.value.copy(isPaired = true)
-    }
-
-    fun unpairDevice() {
-        pairingManager.unpair()
-        _uiState.value = _uiState.value.copy(isPaired = false)
-    }
-
     fun getAdminPin(): String = localStore.getAdminPin()
 
     fun onOpenAdminClicked() {
@@ -380,11 +459,25 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun setDisplayOrientation(orientation: com.example.ui.orientation.SignageOrientation) {
         localStore.setDisplayOrientation(orientation.id)
         _uiState.value = _uiState.value.copy(displayOrientation = orientation)
+        viewModelScope.launch {
+            repository.pushDeviceOrientationSettings(screenOrientation = orientation.id)
+        }
+    }
+
+    fun setVideoOrientation(videoOrientation: com.example.ui.orientation.VideoOrientation) {
+        localStore.setVideoOrientation(videoOrientation.degrees)
+        _uiState.value = _uiState.value.copy(videoOrientation = videoOrientation)
+        viewModelScope.launch {
+            repository.pushDeviceOrientationSettings(videoOrientation = videoOrientation.degrees)
+        }
     }
 
     fun setVideoScaleMode(scaleMode: String) {
         localStore.setVideoScaleMode(scaleMode)
         _uiState.value = _uiState.value.copy(videoScaleMode = scaleMode)
+        viewModelScope.launch {
+            repository.pushDeviceOrientationSettings(scaleMode = scaleMode)
+        }
     }
 
     fun saveApiUrl(url: String) {

@@ -121,6 +121,18 @@ class SignageLocalStore(private val context: Context) {
         prefs.edit().putString(KEY_DISPLAY_ORIENTATION, orientationName).apply()
     }
 
+    fun getVideoOrientation(): Int {
+        val raw = prefs.getInt(KEY_VIDEO_ORIENTATION, 0)
+        val normalized = ((raw % 360) + 360) % 360
+        return if (normalized in listOf(0, 90, 180, 270)) normalized else 0
+    }
+
+    fun setVideoOrientation(degrees: Int) {
+        val normalized = ((degrees % 360) + 360) % 360
+        val valid = if (normalized in listOf(0, 90, 180, 270)) normalized else 0
+        prefs.edit().putInt(KEY_VIDEO_ORIENTATION, valid).apply()
+    }
+
     fun getVideoScaleMode(): String {
         return prefs.getString(KEY_VIDEO_SCALE_MODE, "ZOOM") ?: "ZOOM"
     }
@@ -224,6 +236,7 @@ class SignageLocalStore(private val context: Context) {
         private const val KEY_STARTUP_DELAY = "startup_delay"
         private const val KEY_BURN_IN_PROTECTION = "burn_in_protection"
         private const val KEY_DISPLAY_ORIENTATION = "display_orientation"
+        private const val KEY_VIDEO_ORIENTATION = "video_orientation"
         private const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
         private const val KEY_LAST_PUSH_TIMESTAMP = "last_push_timestamp"
         private const val KEY_OFFLINE_DOWNLOADED_IDS = "offline_downloaded_video_ids"

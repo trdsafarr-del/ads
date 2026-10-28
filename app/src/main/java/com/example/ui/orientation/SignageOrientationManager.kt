@@ -11,25 +11,25 @@ enum class SignageOrientation(
 ) {
     LANDSCAPE(
         id = "LANDSCAPE",
-        title = "Landscape (Horizontal)",
+        title = "Landscape (0° Horizontal)",
         description = "Standard 16:9 TV & Wall Displays",
         activityOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     ),
     PORTRAIT(
         id = "PORTRAIT",
-        title = "Portrait (Vertical)",
+        title = "Portrait (90° Vertical)",
         description = "9:16 Totems, Menu Boards & Kiosk Pillars",
         activityOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
     ),
     REVERSE_LANDSCAPE(
         id = "REVERSE_LANDSCAPE",
-        title = "Reverse Landscape",
+        title = "Reverse Landscape (180°)",
         description = "180° Upside-down Ceiling Mounts",
         activityOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
     ),
     REVERSE_PORTRAIT(
         id = "REVERSE_PORTRAIT",
-        title = "Reverse Portrait",
+        title = "Reverse Portrait (270°)",
         description = "270° Inverted Vertical Displays",
         activityOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
     ),
@@ -49,6 +49,45 @@ enum class SignageOrientation(
             try {
                 activity.requestedOrientation = orientation.activityOrientation
             } catch (_: Exception) {}
+        }
+    }
+}
+
+enum class VideoOrientation(
+    val degrees: Int,
+    val title: String,
+    val shortLabel: String,
+    val description: String
+) {
+    NORMAL_0(
+        degrees = 0,
+        title = "0° Normal (Landscape Video)",
+        shortLabel = "0° Normal",
+        description = "Standard horizontal video playback (0°)"
+    ),
+    ROTATE_90(
+        degrees = 90,
+        title = "90° Rotate Right (Portrait CW)",
+        shortLabel = "90° Right",
+        description = "Rotates video 90° clockwise for vertical TVs"
+    ),
+    ROTATE_180(
+        degrees = 180,
+        title = "180° Upside-Down (Inverted)",
+        shortLabel = "180° Flip",
+        description = "Flips video 180° for inverted/ceiling mounts"
+    ),
+    ROTATE_270(
+        degrees = 270,
+        title = "270° Rotate Left (Portrait CCW)",
+        shortLabel = "270° Left",
+        description = "Rotates video 270° counter-clockwise for vertical TVs"
+    );
+
+    companion object {
+        fun fromDegrees(degrees: Int): VideoOrientation {
+            val normalized = ((degrees % 360) + 360) % 360
+            return entries.firstOrNull { it.degrees == normalized } ?: NORMAL_0
         }
     }
 }

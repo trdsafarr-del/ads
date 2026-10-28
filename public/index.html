@@ -702,7 +702,7 @@
         <div class="stat-info">
           <div class="stat-label">Playlist Version</div>
           <div class="stat-val" id="statVersion">v1</div>
-          <div class="stat-sub">Real-Time 3s Sync</div>
+          <div class="stat-sub">Real-Time 5s Sync</div>
         </div>
         <div class="stat-badge-icon">&#8635;</div>
       </div>
@@ -727,9 +727,9 @@
 
       <div class="stat-box">
         <div class="stat-info">
-          <div class="stat-label">Connected TVs</div>
-          <div class="stat-val" id="statDevices">1</div>
-          <div class="stat-sub">Green Dot Connected</div>
+          <div class="stat-label">Paired TVs</div>
+          <div class="stat-val" id="statDevices">0</div>
+          <div class="stat-sub">Verified 6-Digit Pair</div>
         </div>
         <div class="stat-badge-icon">&#128250;</div>
       </div>
@@ -829,10 +829,10 @@
 
           <div class="form-grid-2">
             <div>
-              <label for="orientationSelect">TV Mounting Orientation</label>
+              <label for="orientationSelect">Default Screen Orientation (All TVs)</label>
               <select id="orientationSelect" onchange="publishAllChanges()">
-                <option value="LANDSCAPE">Landscape (16:9 Horizontal TV)</option>
-                <option value="PORTRAIT">Portrait (9:16 Vertical Standee / Totem)</option>
+                <option value="LANDSCAPE">Landscape (0&deg; Horizontal 16:9 TV)</option>
+                <option value="PORTRAIT">Portrait (90&deg; Vertical Standee / Totem)</option>
                 <option value="REVERSE_LANDSCAPE">Reverse Landscape (180&deg; Inverted)</option>
                 <option value="REVERSE_PORTRAIT">Reverse Portrait (270&deg; Vertical)</option>
                 <option value="AUTO">Auto Sensor Rotation</option>
@@ -840,13 +840,23 @@
             </div>
 
             <div>
-              <label for="scaleModeSelect">Video Aspect Scale Mode</label>
-              <select id="scaleModeSelect" onchange="publishAllChanges()">
-                <option value="ZOOM">ZOOM &mdash; Fill Screen &amp; Crop (No Black Bars)</option>
-                <option value="FIT">FIT &mdash; Fit Center (Preserve Aspect Ratio)</option>
-                <option value="FILL">FILL &mdash; Stretch 100%</option>
+              <label for="videoOrientationSelect">Default Video Orientation (Player Stream Rotation)</label>
+              <select id="videoOrientationSelect" onchange="publishAllChanges()">
+                <option value="0">0&deg; Normal (Landscape Video)</option>
+                <option value="90">90&deg; Rotate Right (Portrait CW Video)</option>
+                <option value="180">180&deg; Upside-Down (Inverted Video)</option>
+                <option value="270">270&deg; Rotate Left (Portrait CCW Video)</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label for="scaleModeSelect">Default Video Aspect Scale Mode</label>
+            <select id="scaleModeSelect" onchange="publishAllChanges()">
+              <option value="ZOOM">ZOOM &mdash; Fill Screen &amp; Crop (No Black Bars)</option>
+              <option value="FIT">FIT &mdash; Fit Center (Preserve Aspect Ratio)</option>
+              <option value="FILL">FILL &mdash; Stretch 100%</option>
+            </select>
           </div>
 
           <!-- Instant Android Toggles -->
@@ -901,10 +911,10 @@
         <div class="card">
           <div class="card-header">
             <span class="card-title"><span class="step-num">3</span> Pair Android TV (6-Digit Code)</span>
-            <span class="badge badge-offline">Auto-Approve Active</span>
+            <span class="badge">Real 6-Digit Verification</span>
           </div>
           <p style="font-size: 12px; color: var(--muted); margin-bottom: 14px;">
-            Enter the 6-digit code shown on your Android TV screen to link it with <strong>ads-broo.vercel.app</strong>:
+            Enter the 6-digit Device Pair Code shown on your Android TV screen (or inside Android Admin Panel) to pair:
           </p>
           <div class="pair-grid">
             <input
@@ -922,18 +932,21 @@
             />
             <button class="btn btn-cyan" style="height: 43px;" onclick="approvePairingCode()">Pair TV Now</button>
           </div>
+          <div id="approvedCodesListContainer" style="margin-top: 12px;"></div>
         </div>
 
-        <!-- 4. Remote Device Operations -->
+        <!-- 4. Remote Device Operations & Per-Device Orientation -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><span class="step-num">4</span> Live Remote TV Controls (24x7 Kiosk)</span>
+            <span class="card-title"><span class="step-num">4</span> Per-Device Screen &amp; Video Orientation + Live TV Controls</span>
             <button class="btn btn-outline btn-sm" onclick="loadDashboardData()">&#8635; Refresh Status</button>
           </div>
           <div class="remote-btn-grid">
-            <button class="btn btn-blue" onclick="sendRemoteCommand('pushSync')">Force Cloud Sync</button>
-            <button class="btn btn-outline" onclick="sendRemoteCommand('setLandscape')">Set Landscape (16:9)</button>
-            <button class="btn btn-outline" onclick="sendRemoteCommand('setPortrait')">Set Portrait (9:16)</button>
+            <button class="btn btn-blue" onclick="sendRemoteCommand('pushSync')">Force Cloud Sync (All)</button>
+            <button class="btn btn-outline" onclick="sendRemoteCommand('setLandscape')">All Screen: Landscape</button>
+            <button class="btn btn-outline" onclick="sendRemoteCommand('setPortrait')">All Screen: Portrait</button>
+            <button class="btn btn-outline" onclick="sendRemoteCommand('setVideoOrientation:0')">All Video: 0&deg; Normal</button>
+            <button class="btn btn-outline" onclick="sendRemoteCommand('setVideoOrientation:90')">All Video: 90&deg; Portrait</button>
             <button class="btn btn-coral" onclick="sendRemoteCommand('clearCache')">Purge TV Cache</button>
           </div>
 
@@ -991,6 +1004,7 @@
     let currentState = {
       version: 1,
       orientation: 'LANDSCAPE',
+      videoOrientation: 0,
       scaleMode: 'ZOOM',
       tickerEnabled: true,
       isMuted: false,
@@ -1073,20 +1087,24 @@
 
         currentState = playlist;
         renderPlaylist(playlist);
-        renderDevices(pairData.devices || []);
+        renderDevices(pairData.devices || [], pairData.approvedCodes || {});
       } catch (e) {
         console.error('Error loading CMS data:', e);
       }
     }
 
     function renderPlaylist(playlist) {
+      const vidDeg = Number(playlist.videoOrientation) || 0;
       document.getElementById('statVersion').textContent = 'v' + (playlist.version || 1);
       document.getElementById('statVideos').textContent = (playlist.videos || []).length;
       document.getElementById('statOrientation').textContent = playlist.orientation || 'LANDSCAPE';
-      document.getElementById('statScaleSub').textContent = (playlist.scaleMode || 'ZOOM') + ' Aspect Mode';
+      document.getElementById('statScaleSub').textContent =
+        `Video: ${vidDeg}° • ${playlist.scaleMode || 'ZOOM'}`;
       document.getElementById('videoCountBadge').textContent = (playlist.videos || []).length + ' Videos';
 
       document.getElementById('orientationSelect').value = playlist.orientation || 'LANDSCAPE';
+      const vidOrientEl = document.getElementById('videoOrientationSelect');
+      if (vidOrientEl) vidOrientEl.value = String(vidDeg);
       document.getElementById('scaleModeSelect').value = playlist.scaleMode || 'ZOOM';
       document.getElementById('tickerEnabledCheck').checked = playlist.tickerEnabled !== false;
       document.getElementById('muteAudioCheck').checked = Boolean(playlist.isMuted);
@@ -1099,7 +1117,9 @@
       const activeVid = videos.find(v => v.id === playlist.lastPushedVideoId) || videos[0];
       if (activeVid) {
         const videoEl = document.getElementById('liveMonitorVideo');
-        document.getElementById('liveMonitorTitle').textContent = `Now Playing: ${activeVid.title || activeVid.id}`;
+        document.getElementById('liveMonitorTitle').textContent =
+          `Now Playing: ${activeVid.title || activeVid.id} (Screen: ${playlist.orientation || 'LANDSCAPE'} | Video: ${vidDeg}°)`;
+        videoEl.style.transform = vidDeg ? `rotate(${vidDeg}deg)` : 'none';
         if (currentMonitorUrl !== activeVid.url) {
           currentMonitorUrl = activeVid.url;
           videoEl.src = activeVid.url;
@@ -1138,45 +1158,156 @@
       document.getElementById('jsonPreview').textContent = JSON.stringify(playlist, null, 2);
     }
 
-    function renderDevices(devices) {
-      document.getElementById('statDevices').textContent = devices.length;
+    function renderDevices(devices, approvedCodes = {}) {
+      // Only show devices that were genuinely paired via an approved 6-digit code (Zero Fake Pairing)
+      const verifiedDevices = (devices || []).filter(
+        d => d && d.paired === true && d.pairingCode && approvedCodes[d.pairingCode]
+      );
+
+      document.getElementById('statDevices').textContent = verifiedDevices.length;
+
+      // Show approved 6-digit codes waiting or active
+      const codesBox = document.getElementById('approvedCodesListContainer');
+      const codeEntries = Object.values(approvedCodes || {});
+      if (codesBox) {
+        if (!codeEntries.length) {
+          codesBox.innerHTML = `<div style="font-size:11px; color:var(--muted);">No 6-digit code approved yet. Enter the 6-digit code shown on your Android TV above and click <strong>Pair TV Now</strong>.</div>`;
+        } else {
+          codesBox.innerHTML = `
+            <div style="font-size:11px; color:var(--emerald); font-weight:700; margin-bottom:6px;">Approved 6-Digit Pairing Codes:</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${codeEntries.map(c => `
+                <span class="badge badge-offline" style="display:inline-flex; align-items:center; gap:6px; padding:5px 10px;">
+                  <span>&#10004; Code: ${c.pairingCode} (${c.deviceName || 'TV'})</span>
+                  <span style="cursor:pointer; color:var(--coral); font-weight:900;" onclick="unpairDeviceByCode('${c.pairingCode}', '')" title="Remove Code">&times;</span>
+                </span>
+              `).join('')}
+            </div>
+          `;
+        }
+      }
+
       const container = document.getElementById('devicesListContainer');
-      if (!devices.length) {
+      if (!verifiedDevices.length) {
         container.innerHTML = `
           <div class="device-card">
-            <div style="font-size:13px; font-weight:700; color:var(--cyan);">Waiting for Android TV Heartbeat...</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:4px;">
-              Your Android TV app connects automatically to <strong>https://ads-broo.vercel.app/</strong> and shows a <strong>Green Dot</strong> in the top-right corner when connected.
+            <div style="font-size:13px; font-weight:700; color:var(--amber);">No Paired Android TV Yet (Zero Fake Pairing)</div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:4px;">
+              Open the Android TV app to view its <strong>6-Digit Device Pair Code</strong>, enter that code in <strong>Section 3</strong> above, and click <strong>Pair TV Now</strong>. Live background sync runs every <strong>5 seconds</strong>!
             </div>
           </div>
         `;
         return;
       }
 
-      container.innerHTML = devices.map(d => {
+      container.innerHTML = verifiedDevices.map(d => {
         const mb = ((d.storageUsed || 0) / (1024 * 1024)).toFixed(1);
         const secondsAgo = d.lastSeen ? Math.max(1, Math.round((Date.now() - d.lastSeen) / 1000)) : 1;
         const isOnline = secondsAgo < 60;
         const dotColor = isOnline ? 'var(--emerald)' : 'var(--blue)';
+        const devScreenOrient = d.screenOrientation || currentState.orientation || 'LANDSCAPE';
+        const devVideoOrient =
+          d.videoOrientation !== undefined && d.videoOrientation !== null
+            ? Number(d.videoOrientation)
+            : Number(currentState.videoOrientation) || 0;
+        const devScaleMode = d.scaleMode || currentState.scaleMode || 'ZOOM';
+        const safeId = String(d.deviceId).replace(/[^a-zA-Z0-9_-]/g, '_');
+
         return `
           <div class="device-card">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-              <strong style="font-size:14px; color:#fff; display:flex; align-items:center; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+              <strong style="font-size:14px; color:#fff; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span style="width:10px; height:10px; border-radius:50%; background:${dotColor}; display:inline-block;"></span>
-                ${d.deviceName || d.deviceId}
+                <span>${d.deviceName || d.deviceId}</span>
+                <span class="badge">Code: ${d.pairingCode}</span>
+                <span class="badge" style="background:rgba(0,230,118,0.14); color:var(--emerald); border-color:rgba(0,230,118,0.35);">
+                  SCR: ${devScreenOrient} &bull; VID: ${devVideoOrient}&deg;
+                </span>
               </strong>
-              <span class="badge" style="background:rgba(0,230,118,0.15); color:var(--emerald); border-color:rgba(0,230,118,0.35);">${isOnline ? 'CONNECTED (GREEN)' : 'IDLE'}</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span class="badge badge-offline">&#10004; PAIRED (${isOnline ? '5s LIVE' : 'IDLE'})</span>
+                <button class="btn btn-coral btn-sm" onclick="unpairDeviceByCode('${d.pairingCode || ''}', '${d.deviceId}')">Unpair</button>
+              </div>
             </div>
             <div style="font-size:11.5px; color:var(--muted); margin-top:6px;">
-              ID: <code>${d.deviceId}</code> &bull; Playing: <strong>${d.currentVideoId || 'Looping'}</strong> &bull; Offline Cache: <strong>${mb} MB</strong> &bull; Seen: ${secondsAgo}s ago
+              ID: <code>${d.deviceId}</code> &bull; Playing: <strong>${d.currentVideoId || 'Looping'}</strong> &bull; Offline Cache: <strong>${mb} MB</strong> &bull; Synced: ${secondsAgo}s ago
+            </div>
+
+            <!-- Per-Device Screen Orientation, Video Orientation & Scale Mode Controls -->
+            <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+              <div style="font-size:11px; font-weight:800; color:var(--cyan); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.4px;">
+                Per-Device Screen Orientation &amp; Video Orientation (Only for ${d.deviceName || d.deviceId}):
+              </div>
+              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:8px; align-items:end;">
+                <div>
+                  <label style="font-size:10.5px; margin-bottom:4px;">Screen Orientation (OS/UI)</label>
+                  <select id="devScreenOrient_${safeId}" style="margin-bottom:0; padding:7px 9px; font-size:12px;" onchange="updateSingleDeviceOrientation('${d.deviceId}', '${safeId}')">
+                    <option value="LANDSCAPE" ${devScreenOrient === 'LANDSCAPE' ? 'selected' : ''}>Landscape (0&deg; Horizontal)</option>
+                    <option value="PORTRAIT" ${devScreenOrient === 'PORTRAIT' ? 'selected' : ''}>Portrait (90&deg; Vertical)</option>
+                    <option value="REVERSE_LANDSCAPE" ${devScreenOrient === 'REVERSE_LANDSCAPE' ? 'selected' : ''}>Reverse Landscape (180&deg;)</option>
+                    <option value="REVERSE_PORTRAIT" ${devScreenOrient === 'REVERSE_PORTRAIT' ? 'selected' : ''}>Reverse Portrait (270&deg;)</option>
+                    <option value="AUTO" ${devScreenOrient === 'AUTO' ? 'selected' : ''}>Auto Sensor</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:10.5px; margin-bottom:4px;">Video Orientation (Player)</label>
+                  <select id="devVideoOrient_${safeId}" style="margin-bottom:0; padding:7px 9px; font-size:12px;" onchange="updateSingleDeviceOrientation('${d.deviceId}', '${safeId}')">
+                    <option value="0" ${devVideoOrient === 0 ? 'selected' : ''}>0&deg; Normal (Landscape)</option>
+                    <option value="90" ${devVideoOrient === 90 ? 'selected' : ''}>90&deg; Rotate Right (Portrait CW)</option>
+                    <option value="180" ${devVideoOrient === 180 ? 'selected' : ''}>180&deg; Upside-Down</option>
+                    <option value="270" ${devVideoOrient === 270 ? 'selected' : ''}>270&deg; Rotate Left (Portrait CCW)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:10.5px; margin-bottom:4px;">Video Scale Mode</label>
+                  <select id="devScaleMode_${safeId}" style="margin-bottom:0; padding:7px 9px; font-size:12px;" onchange="updateSingleDeviceOrientation('${d.deviceId}', '${safeId}')">
+                    <option value="ZOOM" ${devScaleMode === 'ZOOM' ? 'selected' : ''}>ZOOM (Fill &amp; Crop)</option>
+                    <option value="FIT" ${devScaleMode === 'FIT' ? 'selected' : ''}>FIT (Fit Center)</option>
+                    <option value="FILL" ${devScaleMode === 'FILL' ? 'selected' : ''}>FILL (Stretch 100%)</option>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+                <button class="btn btn-emerald btn-sm" onclick="updateSingleDeviceOrientation('${d.deviceId}', '${safeId}')">
+                  &#10004; Apply Screen &amp; Video Orientation to This TV
+                </button>
+              </div>
             </div>
           </div>
         `;
       }).join('');
     }
 
+    async function updateSingleDeviceOrientation(deviceId, safeId) {
+      const screenEl = document.getElementById('devScreenOrient_' + safeId);
+      const videoEl = document.getElementById('devVideoOrient_' + safeId);
+      const scaleEl = document.getElementById('devScaleMode_' + safeId);
+      if (!screenEl || !videoEl || !scaleEl) return;
+
+      const screenOrientation = screenEl.value;
+      const videoOrientation = Number(videoEl.value) || 0;
+      const scaleMode = scaleEl.value;
+
+      const res = await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId,
+          action: 'setDeviceOrientation',
+          screenOrientation,
+          videoOrientation,
+          scaleMode
+        })
+      });
+      const data = await res.json();
+      showToast(data.message || `Applied Screen (${screenOrientation}) & Video (${videoOrientation}°) to ${deviceId}`);
+      loadDashboardData();
+    }
+
     async function publishAllChanges(extraFields = {}) {
       const orientation = document.getElementById('orientationSelect').value;
+      const videoOrientEl = document.getElementById('videoOrientationSelect');
+      const videoOrientation = videoOrientEl ? Number(videoOrientEl.value) || 0 : 0;
       const scaleMode = document.getElementById('scaleModeSelect').value;
       const tickerEnabled = document.getElementById('tickerEnabledCheck').checked;
       const isMuted = document.getElementById('muteAudioCheck').checked;
@@ -1187,6 +1318,7 @@
       const payload = {
         videos: currentState.videos,
         orientation,
+        videoOrientation,
         scaleMode,
         tickerEnabled,
         isMuted,
@@ -1365,8 +1497,8 @@
     async function approvePairingCode() {
       const code = document.getElementById('pairCodeInput').value.trim();
       const deviceName = document.getElementById('pairDeviceName').value.trim();
-      if (!code) {
-        showToast('Enter the 6-digit code from your TV');
+      if (!code || code.length !== 6) {
+        showToast('Please enter the 6-digit Device Pair Code from your Android TV');
         return;
       }
       await fetch('/api/devices/pair', {
@@ -1375,7 +1507,17 @@
         body: JSON.stringify({ action: 'approveCode', pairingCode: code, deviceName })
       });
       document.getElementById('pairCodeInput').value = '';
-      showToast('6-Digit TV Code ' + code + ' Approved!');
+      showToast('6-Digit TV Code ' + code + ' Approved! Android TV will pair within 5 seconds.');
+      loadDashboardData();
+    }
+
+    async function unpairDeviceByCode(pairingCode, deviceId) {
+      await fetch('/api/devices/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unpairDevice', pairingCode, deviceId })
+      });
+      showToast('Device unpaired & removed!');
       loadDashboardData();
     }
 
@@ -1391,7 +1533,7 @@
     }
 
     loadDashboardData();
-    setInterval(loadDashboardData, 4000);
+    setInterval(loadDashboardData, 5000);
   </script>
 </body>
 </html>

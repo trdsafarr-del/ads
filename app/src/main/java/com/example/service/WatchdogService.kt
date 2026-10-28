@@ -17,13 +17,21 @@ import com.example.R
 import com.example.SignageApplication
 import com.example.data.local.db.DeviceLogEntity
 import com.example.data.local.db.SignageDatabase
+import com.example.data.repository.SignageRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class WatchdogService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var backgroundSyncJob: Job? = null
     private val restartTimestamps = mutableListOf<Long>()
     private var isCrashLoopPaused = false
 
@@ -50,11 +58,39 @@ class WatchdogService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Start 10-second monitoring cycle
+        // Start 10-second health monitoring cycle
         handler.removeCallbacks(watchdogRunnable)
         handler.postDelayed(watchdogRunnable, PING_INTERVAL_MS)
 
+        // Start 5-second background live sync loop when internet is ON
+        startBackgroundLiveSyncLoop()
+
         return START_STICKY
+    }
+
+    /**
+     * Background 5-second sync loop that runs when internet is ON.
+     * Coordinates with SignageViewModel so if the UI loop is already polling every 5s,
+     * it avoids duplicate calls, while keeping 5s sync active if the app is in the background.
+     */
+    private fun startBackgroundLiveSyncLoop() {
+        if (backgroundSyncJob?.isActive == true) return
+        val repository = SignageRepository(applicationContext)
+        backgroundSyncJob = serviceScope.launch {
+            while (isActive) {
+                try {
+                    if (repository.hasInternetConnection()) {
+                        val elapsedSinceUiSync = System.currentTimeMillis() - lastUiSyncTimestamp
+                        if (elapsedSinceUiSync > 5_500L) {
+                            repository.pollRealtimeDashboardSync(null)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Background 5s sync notice: ${e.message}")
+                }
+                delay(LIVE_SYNC_INTERVAL_MS)
+            }
+        }
     }
 
     private fun checkPlayerHealth() {
@@ -76,7 +112,7 @@ class WatchdogService : Service() {
 
                     handler.postDelayed({
                         isCrashLoopPaused = false
-                        lastHeartbeatTimestamp = System.currentTimeMillis() // reset timer after safety wait
+                        lastHeartbeatTimestamp = System.currentTimeMillis()
                     }, 60_000L)
                 }
                 return
@@ -106,7 +142,7 @@ class WatchdogService : Service() {
     }
 
     private fun logIncident(level: String, message: String) {
-        CoroutineScope(Dispatchers.IO).launch {
+        serviceScope.launch {
             try {
                 SignageDatabase.getInstance(applicationContext).deviceLogDao().insert(
                     DeviceLogEntity(
@@ -129,8 +165,8 @@ class WatchdogService : Service() {
         )
 
         return NotificationCompat.Builder(this, SignageApplication.CHANNEL_BOOT_SERVICE)
-            .setContentTitle("Digital Signage Health Monitor")
-            .setContentText("Watchdog active: 24/7 crash recovery & auto-restart")
+            .setContentTitle("Digital Signage Health & 5s Live Sync")
+            .setContentText("Watchdog active: 24/7 recovery & 5s background sync when online")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -141,23 +177,33 @@ class WatchdogService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(watchdogRunnable)
+        backgroundSyncJob?.cancel()
+        serviceScope.cancel()
         Log.d(TAG, "WatchdogService destroyed")
     }
 
     companion object {
         private const val TAG = "WatchdogService"
         private const val NOTIFICATION_ID = 2002
-        private const val PING_INTERVAL_MS = 10_000L // Check every 10 seconds
+        private const val PING_INTERVAL_MS = 10_000L // Health check every 10 seconds
+        private const val LIVE_SYNC_INTERVAL_MS = 5_000L // Live sync every 5 seconds when internet is ON
         private const val UNRESPONSIVE_THRESHOLD_MS = 25_000L // 25s without heartbeat
 
         @Volatile
         private var lastHeartbeatTimestamp: Long = System.currentTimeMillis()
+
+        @Volatile
+        var lastUiSyncTimestamp: Long = 0L
 
         /**
          * Called by MainActivity / SignagePlayerManager every 5-10s to signal healthy playback.
          */
         fun ping(context: Context) {
             lastHeartbeatTimestamp = System.currentTimeMillis()
+        }
+
+        fun notifyUiSynced() {
+            lastUiSyncTimestamp = System.currentTimeMillis()
         }
 
         fun start(context: Context) {

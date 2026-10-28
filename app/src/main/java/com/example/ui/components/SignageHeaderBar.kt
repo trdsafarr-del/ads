@@ -59,6 +59,8 @@ fun SignageHeaderBar(
     isAdPlaying: Boolean,
     isMuted: Boolean,
     connectionStatus: DashboardConnectionStatus,
+    screenOrientationLabel: String = "LANDSCAPE",
+    videoOrientationDegrees: Int = 0,
     onToggleMute: () -> Unit,
     onOpenAdmin: () -> Unit,
     modifier: Modifier = Modifier
@@ -169,6 +171,20 @@ fun SignageHeaderBar(
                                 text = "Video ${currentIndex + 1}/$totalItems",
                                 color = TextMuted,
                                 fontSize = 11.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .background(NeonCyan.copy(alpha = 0.14f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "SCR: $screenOrientationLabel • VID: ${videoOrientationDegrees}°",
+                                color = NeonCyan,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

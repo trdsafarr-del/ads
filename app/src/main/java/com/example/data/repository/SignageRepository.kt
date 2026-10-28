@@ -12,6 +12,7 @@ import com.example.data.api.PairRequest
 import com.example.data.api.PushPlaylistSettingsRequest
 import com.example.data.api.PushSingleVideoRequest
 import com.example.data.api.SignageApiService
+import com.example.data.api.UnpairDeviceRequest
 import com.example.data.api.UploadVideoRequest
 import com.example.data.local.SignageLocalStore
 import com.example.data.local.db.CachedPlaylistEntity
@@ -199,11 +200,13 @@ class SignageRepository(private val context: Context) {
     }
 
     /**
-     * Real-time 3-second polling of the Web CMS Dashboard:
+     * Real-time 5-second background sync of the Web CMS Dashboard (runs when internet is ON):
      * 1. Determines Green / Red / Blue connection status dot.
-     * 2. Syncs any setting changes made on the Web Dashboard immediately to the Android app.
-     * 3. Detects newly uploaded/added videos to show the "Download for Offline" popup.
-     * 4. Detects newly pushed videos (`lastPushedVideoId`) to auto-play immediately.
+     * 2. When unpaired, checks if the 6-digit pairing code has been approved on the Web Dashboard
+     *    without sending fake device heartbeats.
+     * 3. When paired, syncs any setting changes made on the Web Dashboard immediately to the Android app.
+     * 4. Detects newly uploaded/added videos to show the "Download for Offline" popup.
+     * 5. Detects newly pushed videos (`lastPushedVideoId`) to auto-play immediately.
      */
     suspend fun pollRealtimeDashboardSync(currentVideoId: String?): RealtimeSyncResult = withContext(Dispatchers.IO) {
         if (!hasInternetConnection()) {
@@ -219,23 +222,49 @@ class SignageRepository(private val context: Context) {
         try {
             val api = createRetrofit(baseUrl, fastPoll = true)
 
-            // 1. Send heartbeat & check queued remote actions
+            // If device is not paired yet, check if user entered the 6-digit code on Web Dashboard
+            if (!pairingManager.isPaired()) {
+                val pairedNow = pollRemotePairing()
+                if (!pairedNow) {
+                    // Check if server is reachable so top-right dot reflects server reachability
+                    val statusCheck = try {
+                        api.getPairingStatus()
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val dot = if (statusCheck != null && statusCheck.isSuccessful) {
+                        DashboardConnectionStatus.CONNECTED_GREEN
+                    } else {
+                        DashboardConnectionStatus.DISCONNECTED_BLUE
+                    }
+                    return@withContext RealtimeSyncResult(
+                        connectionStatus = dot,
+                        playlist = null
+                    )
+                }
+            }
+
+            // 1. Device is genuinely paired: Send heartbeat & check queued remote actions
             val hbResponse = try {
                 api.sendHeartbeat(
                     HeartbeatRequest(
                         deviceId = deviceId,
+                        pairingCode = pairingManager.getPairingCode(),
                         status = "PLAYING",
                         currentVideoId = currentVideoId,
                         storageUsed = localStore.getCachedStorageSizeBytes(),
                         appVersion = "1.0",
-                        lastSyncTime = localStore.getLastSyncTimestamp()
+                        lastSyncTime = localStore.getLastSyncTimestamp(),
+                        screenOrientation = localStore.getDisplayOrientation(),
+                        videoOrientation = localStore.getVideoOrientation(),
+                        scaleMode = localStore.getVideoScaleMode()
                     )
                 )
             } catch (e: Exception) {
                 null
             }
 
-            // 2. Fetch live playlist & settings snapshot
+            // 2. Fetch live playlist & settings snapshot (tailored for this deviceId)
             val playlistRes = api.fetchPlaylist(deviceId)
             if (!playlistRes.isSuccessful || playlistRes.body() == null) {
                 return@withContext RealtimeSyncResult(
@@ -253,9 +282,28 @@ class SignageRepository(private val context: Context) {
             var actionPlayVideoId: String? = null
             if (!serverAction.isNullOrBlank()) {
                 when {
+                    serverAction == "unpairDevice" -> {
+                        pairingManager.unpair()
+                        return@withContext RealtimeSyncResult(
+                            connectionStatus = DashboardConnectionStatus.CONNECTED_GREEN,
+                            playlist = null
+                        )
+                    }
                     serverAction == "clearCache" -> localStore.cleanupUnusedVideos(emptyList())
                     serverAction == "setPortrait" -> localStore.setDisplayOrientation("PORTRAIT")
                     serverAction == "setLandscape" -> localStore.setDisplayOrientation("LANDSCAPE")
+                    serverAction.startsWith("setScreenOrientation:") -> {
+                        val orient = serverAction.removePrefix("setScreenOrientation:").trim()
+                        if (orient.isNotEmpty()) localStore.setDisplayOrientation(orient)
+                    }
+                    serverAction.startsWith("setVideoOrientation:") -> {
+                        val deg = serverAction.removePrefix("setVideoOrientation:").trim().toIntOrNull()
+                        if (deg != null) localStore.setVideoOrientation(deg)
+                    }
+                    serverAction.startsWith("setScaleMode:") -> {
+                        val sm = serverAction.removePrefix("setScaleMode:").trim()
+                        if (sm.isNotEmpty()) localStore.setVideoScaleMode(sm)
+                    }
                     serverAction == "muteAudio" -> localStore.setPlayerMuted(true)
                     serverAction == "unmuteAudio" -> localStore.setPlayerMuted(false)
                     serverAction.startsWith("playVideo:") -> {
@@ -296,17 +344,19 @@ class SignageRepository(private val context: Context) {
             val hasChanges = current.version != resolved.version ||
                 current.items.map { it.id to it.isOfflineDownloaded } != resolved.items.map { it.id to it.isOfflineDownloaded } ||
                 current.orientation != resolved.orientation ||
+                current.videoOrientation != resolved.videoOrientation ||
                 current.scaleMode != resolved.scaleMode ||
                 current.tickerText != resolved.tickerText ||
                 current.tickerEnabled != resolved.tickerEnabled ||
                 current.isMuted != resolved.isMuted ||
                 current.kioskLocked != resolved.kioskLocked
 
+            val now = System.currentTimeMillis()
+            localStore.setLastSyncTimestamp(now)
+            localStore.setLastSyncStatus("Live Synced (v${resolved.version})")
+
             if (hasChanges) {
                 persistUpdatedPlaylist(resolved, autoSynthesizeMissing = false)
-                val now = System.currentTimeMillis()
-                localStore.setLastSyncTimestamp(now)
-                localStore.setLastSyncStatus("Live Connected (v${resolved.version})")
             }
 
             return@withContext RealtimeSyncResult(
@@ -403,7 +453,8 @@ class SignageRepository(private val context: Context) {
                 val api = createRetrofit(baseUrl)
 
                 val response = try {
-                    api.fetchPlaylist(deviceId)
+                    val queryDeviceId = if (pairingManager.isPaired()) deviceId else null
+                    api.fetchPlaylist(queryDeviceId)
                 } catch (e: Exception) {
                     null
                 }
@@ -513,6 +564,9 @@ class SignageRepository(private val context: Context) {
         if (!schema.orientation.isNullOrBlank()) {
             localStore.setDisplayOrientation(schema.orientation)
         }
+        if (schema.videoOrientation != null) {
+            localStore.setVideoOrientation(schema.videoOrientation)
+        }
         if (!schema.scaleMode.isNullOrBlank()) {
             localStore.setVideoScaleMode(schema.scaleMode)
         }
@@ -549,6 +603,7 @@ class SignageRepository(private val context: Context) {
             defaultAdTagUrl = defaultAdTag,
             tickerText = schema.tickerText,
             orientation = schema.orientation ?: localStore.getDisplayOrientation(),
+            videoOrientation = schema.videoOrientation ?: localStore.getVideoOrientation(),
             scaleMode = schema.scaleMode ?: localStore.getVideoScaleMode(),
             tickerEnabled = schema.tickerEnabled ?: localStore.isTickerEnabled(),
             isMuted = schema.isMuted ?: localStore.isPlayerMuted(),
@@ -561,27 +616,72 @@ class SignageRepository(private val context: Context) {
         )
     }
 
+    /**
+     * Checks with the CMS server whether the user has genuinely entered & approved
+     * this device's 6-digit pairing code (`approvedCodes[myCode] != null`).
+     * Never auto-pairs or creates fake device entries before the code is entered on the Web Dashboard.
+     */
     suspend fun pollRemotePairing(): Boolean = withContext(Dispatchers.IO) {
+        if (!hasInternetConnection()) return@withContext false
         if (pairingManager.isPaired()) return@withContext true
         try {
             val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+            val myCode = pairingManager.getPairingCode().trim()
+            val myDeviceId = pairingManager.getDeviceId()
+
+            // Step 1: Verify that the 6-digit code was actually approved on the Web Dashboard
+            val statusResponse = api.getPairingStatus()
+            val statusBody = statusResponse.body()
+            val approvedEntry = statusBody?.approvedCodes?.get(myCode)
+
+            if (!statusResponse.isSuccessful || approvedEntry == null) {
+                // Code has not been entered on the Web Dashboard yet -> remain Unpaired (zero fake pairing)
+                return@withContext false
+            }
+
+            // Step 2: Code was genuinely approved by user -> register paired device with CMS
             val response = api.pairDevice(
                 PairRequest(
-                    deviceId = pairingManager.getDeviceId(),
-                    pairingCode = pairingManager.getPairingCode(),
+                    deviceId = myDeviceId,
+                    pairingCode = myCode,
                     deviceInfo = "Android TV (${Build.MANUFACTURER} ${Build.MODEL})"
                 )
             )
             val body = response.body()
             if (response.isSuccessful && body != null && body.success) {
-                val token = body.deviceToken ?: "cms_token_${System.currentTimeMillis()}"
-                pairingManager.confirmPairing(token)
+                val token = body.deviceToken?.takeIf { it.startsWith("tok_") }
+                    ?: "tok_${myDeviceId}_${System.currentTimeMillis()}"
+                val screenName = body.deviceName
+                    ?: approvedEntry.deviceName
+                    ?: "SignageTV (${myDeviceId.takeLast(4)})"
+                pairingManager.confirmPairing(token, screenName)
                 return@withContext true
             }
         } catch (e: Exception) {
             Log.d(TAG, "Pairing poll awaiting CMS confirmation: ${e.message}")
         }
         false
+    }
+
+    /**
+     * Unpairs the device locally (generating a new 6-digit code) AND removes the pairing on the CMS server.
+     */
+    suspend fun unpairDeviceFromCms(): String = withContext(Dispatchers.IO) {
+        val oldDeviceId = pairingManager.getDeviceId()
+        val oldCode = pairingManager.getPairingCode()
+        val newCode = pairingManager.unpair()
+        if (hasInternetConnection()) {
+            try {
+                val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+                api.unpairDeviceOnServer(
+                    UnpairDeviceRequest(
+                        deviceId = oldDeviceId,
+                        pairingCode = oldCode
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+        newCode
     }
 
     /**
@@ -807,6 +907,38 @@ class SignageRepository(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Pushes per-device Screen Orientation, Video Orientation, and Scale Mode to the Web CMS
+     * so this device's orientation settings stay synced in real time.
+     */
+    suspend fun pushDeviceOrientationSettings(
+        screenOrientation: String? = null,
+        videoOrientation: Int? = null,
+        scaleMode: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val current = _playlistFlow.value
+        val updatedPlaylist = current.copy(
+            orientation = screenOrientation ?: current.orientation,
+            videoOrientation = videoOrientation ?: current.videoOrientation,
+            scaleMode = scaleMode ?: current.scaleMode
+        )
+        persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+
+        if (hasInternetConnection()) {
+            try {
+                val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+                api.pushPlaylistSettings(
+                    PushPlaylistSettingsRequest(
+                        deviceId = pairingManager.getDeviceId(),
+                        orientation = screenOrientation,
+                        videoOrientation = videoOrientation,
+                        scaleMode = scaleMode
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     private suspend fun persistUpdatedPlaylist(
         playlist: PlaylistResponse,
         autoSynthesizeMissing: Boolean = false
@@ -909,24 +1041,42 @@ class SignageRepository(private val context: Context) {
     }
 
     suspend fun sendDeviceHeartbeat(currentVideoId: String? = null): String? = withContext(Dispatchers.IO) {
+        if (!hasInternetConnection() || !pairingManager.isPaired()) return@withContext null
         try {
             val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
             val request = HeartbeatRequest(
                 deviceId = pairingManager.getDeviceId(),
+                pairingCode = pairingManager.getPairingCode(),
                 status = "PLAYING",
                 currentVideoId = currentVideoId,
                 storageUsed = localStore.getCachedStorageSizeBytes(),
                 appVersion = "1.0",
-                lastSyncTime = localStore.getLastSyncTimestamp()
+                lastSyncTime = localStore.getLastSyncTimestamp(),
+                screenOrientation = localStore.getDisplayOrientation(),
+                videoOrientation = localStore.getVideoOrientation(),
+                scaleMode = localStore.getVideoScaleMode()
             )
             val response = api.sendHeartbeat(request)
             val action = response.body()?.serverAction
             if (!action.isNullOrBlank()) {
                 when {
+                    action == "unpairDevice" -> pairingManager.unpair()
                     action == "pushSync" -> syncPlaylist()
                     action == "clearCache" -> localStore.cleanupUnusedVideos(emptyList())
                     action == "setPortrait" -> localStore.setDisplayOrientation("PORTRAIT")
                     action == "setLandscape" -> localStore.setDisplayOrientation("LANDSCAPE")
+                    action.startsWith("setScreenOrientation:") -> {
+                        val orient = action.removePrefix("setScreenOrientation:").trim()
+                        if (orient.isNotEmpty()) localStore.setDisplayOrientation(orient)
+                    }
+                    action.startsWith("setVideoOrientation:") -> {
+                        val deg = action.removePrefix("setVideoOrientation:").trim().toIntOrNull()
+                        if (deg != null) localStore.setVideoOrientation(deg)
+                    }
+                    action.startsWith("setScaleMode:") -> {
+                        val sm = action.removePrefix("setScaleMode:").trim()
+                        if (sm.isNotEmpty()) localStore.setVideoScaleMode(sm)
+                    }
                 }
             }
             action

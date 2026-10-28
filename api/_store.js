@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const STATE_FILE = path.join('/tmp', 'signage_cms_state_v2.json');
+const STATE_FILE = path.join('/tmp', 'signage_cms_state_v3.json');
 const UPLOAD_DIR = path.join('/tmp', 'signage_uploads');
 
 try {
@@ -23,10 +23,11 @@ const RELIABLE_URLS = [
 ];
 
 const DEFAULT_STATE = {
-  autoApprovePairing: true,
+  autoApprovePairing: false,
   playlist: {
     version: 1,
     orientation: 'LANDSCAPE',
+    videoOrientation: 0,
     scaleMode: 'ZOOM',
     tickerEnabled: true,
     isMuted: false,

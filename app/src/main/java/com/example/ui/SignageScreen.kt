@@ -83,13 +83,16 @@ fun SignageScreen(
     val isAdPlaying by playerManager.isAdPlaying.collectAsState()
     val isMuted by playerManager.isMuted.collectAsState()
 
-    // Sync playlist changes with player
-    LaunchedEffect(playlist) {
-        if (playlist.items.isNotEmpty()) {
+    // Sync playlist changes with player only when device is paired
+    LaunchedEffect(playlist, uiState.isPaired) {
+        if (uiState.isPaired && playlist.items.isNotEmpty()) {
             playerManager.loadPlaylist(
                 items = playlist.items,
                 startVideoId = uiState.pushedVideoIdToAutoPlay ?: playlist.lastPushedVideoId
             )
+            playerManager.play()
+        } else if (!uiState.isPaired) {
+            playerManager.pause()
         }
     }
 
@@ -153,15 +156,19 @@ fun SignageScreen(
                 deviceId = uiState.deviceId,
                 pairingCode = uiState.pairingCode,
                 ipAddress = uiState.ipAddress,
+                connectionStatus = uiState.connectionStatus,
+                pairingStatusMessage = uiState.pairingStatusMessage,
+                isCheckingPairing = uiState.isCheckingPairing,
                 onPollPairing = { viewModel.pollPairingStatus() },
-                onSkipToStandaloneDemo = { viewModel.skipPairingForDemo() },
+                onRegenerateCode = { viewModel.regeneratePairingCode() },
                 onOpenAdmin = { viewModel.onOpenAdminClicked() }
             )
         } else {
-            // 1. Full-screen Video Loop View with ExoPlayer & Google IMA Ads
+            // 1. Full-screen Video Loop View with ExoPlayer, Google IMA Ads & Per-Device Video Orientation
             VideoLoopView(
                 playerManager = playerManager,
                 scaleMode = uiState.videoScaleMode,
+                videoOrientationDegrees = uiState.videoOrientation.degrees,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -202,6 +209,8 @@ fun SignageScreen(
                 isAdPlaying = isAdPlaying,
                 isMuted = isMuted,
                 connectionStatus = uiState.connectionStatus,
+                screenOrientationLabel = uiState.displayOrientation.id,
+                videoOrientationDegrees = uiState.videoOrientation.degrees,
                 onToggleMute = {
                     val newMuted = playerManager.toggleMute()
                     viewModel.togglePlayerMute(newMuted)
@@ -255,8 +264,19 @@ fun SignageScreen(
         ) {
             AdminSettingsPanel(
                 playlist = playlist,
+                deviceId = uiState.deviceId,
+                pairingCode = uiState.pairingCode,
+                isPaired = uiState.isPaired,
+                pairedScreenName = uiState.pairedScreenName,
+                pairedAtTimestamp = uiState.pairedAtTimestamp,
+                pairingStatusMessage = uiState.pairingStatusMessage,
+                onVerifyPairingNow = { viewModel.pollPairingStatus() },
+                onRegeneratePairingCode = { viewModel.regeneratePairingCode() },
+                onUnpairDevice = { viewModel.unpairDevice() },
                 currentOrientation = uiState.displayOrientation,
                 onSelectOrientation = { viewModel.setDisplayOrientation(it) },
+                currentVideoOrientation = uiState.videoOrientation,
+                onSelectVideoOrientation = { viewModel.setVideoOrientation(it) },
                 currentScaleMode = uiState.videoScaleMode,
                 onSelectScaleMode = { viewModel.setVideoScaleMode(it) },
                 isKioskLocked = uiState.isKioskLocked,
