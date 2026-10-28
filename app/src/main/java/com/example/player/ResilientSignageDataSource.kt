@@ -10,26 +10,22 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.TransferListener
 import java.io.IOException
-import java.util.Collections
 
 /**
- * A resilient Media3 [DataSource] that wraps [DefaultDataSource] (configured with browser-compatible
- * HTTP headers and redirect support) and transparently falls back to a valid local MP4 file on disk
- * whenever a remote HTTP stream returns 403 Forbidden, 404, 5xx, or network timeout.
- *
- * By handling [IOException] (including [androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException])
- * directly inside [open], ExoPlayer never experiences a fatal source error or infinite retry loop.
+ * A resilient Media3 [DataSource] that wraps [DefaultDataSource] with browser-compatible
+ * HTTP headers, cross-protocol redirect support, and automatic URL sanitization for legacy
+ * restricted sample URLs. Plays real video streams without invoking MediaMuxer or synthetic
+ * fallback generators.
  */
 @OptIn(UnstableApi::class)
 class ResilientSignageDataSource(
     private val context: Context,
-    private val baseDataSource: DataSource
+    private val baseDataSource: DataSource,
+    private val backupDataSourceProvider: () -> DataSource
 ) : DataSource {
 
-    private var fileFallbackDataSource: FileDataSource? = null
     private var activeDataSource: DataSource? = null
     private var activeUri: Uri? = null
 
@@ -40,7 +36,7 @@ class ResilientSignageDataSource(
             .setUserAgent(BROWSER_USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(20_000)
+            .setReadTimeoutMs(25_000)
             .setDefaultRequestProperties(
                 mapOf(
                     "Accept" to "*/*",
@@ -56,7 +52,8 @@ class ResilientSignageDataSource(
         override fun createDataSource(): DataSource {
             return ResilientSignageDataSource(
                 context = appContext,
-                baseDataSource = defaultDataSourceFactory.createDataSource()
+                baseDataSource = defaultDataSourceFactory.createDataSource(),
+                backupDataSourceProvider = { defaultDataSourceFactory.createDataSource() }
             )
         }
     }
@@ -66,76 +63,58 @@ class ResilientSignageDataSource(
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        val uri = dataSpec.uri
-        val scheme = uri.scheme?.lowercase()
+        val originalUri = dataSpec.uri
+        val scheme = originalUri.scheme?.lowercase()
 
         if (scheme == "http" || scheme == "https") {
-            val urlString = uri.toString()
-            if (isKnownRestrictedUrl(urlString) || failedRemoteUrls.contains(urlString)) {
-                return openLocalFallback(dataSpec, "Bypassing restricted URL: $urlString")
+            val urlString = originalUri.toString()
+            val effectiveSpec = if (isKnownRestrictedUrl(urlString)) {
+                val replacementUrl = rewriteRestrictedUrl(urlString)
+                Log.i(TAG, "Rewriting restricted sample URL to real stream: $replacementUrl")
+                dataSpec.buildUpon()
+                    .setUri(Uri.parse(replacementUrl))
+                    .build()
+            } else {
+                dataSpec
             }
 
             return try {
                 activeDataSource = baseDataSource
-                activeUri = null
-                baseDataSource.open(dataSpec)
-            } catch (e: IOException) {
-                failedRemoteUrls.add(urlString)
+                activeUri = effectiveSpec.uri
+                baseDataSource.open(effectiveSpec)
+            } catch (firstError: IOException) {
+                Log.w(TAG, "Primary stream open notice (${firstError.message}) for ${effectiveSpec.uri}, retrying...")
                 try {
                     baseDataSource.close()
                 } catch (_: Exception) {}
-                openLocalFallback(dataSpec, "HTTP fallback (${e.message}) for $urlString")
-            }
-        } else {
-            return try {
-                activeDataSource = baseDataSource
-                activeUri = null
-                baseDataSource.open(dataSpec)
-            } catch (e: IOException) {
+
+                val retryDs = backupDataSourceProvider()
+                activeDataSource = retryDs
                 try {
-                    baseDataSource.close()
-                } catch (_: Exception) {}
-                openLocalFallback(dataSpec, "Local file fallback (${e.message}) for $uri")
+                    activeUri = effectiveSpec.uri
+                    retryDs.open(effectiveSpec)
+                } catch (retryError: IOException) {
+                    try {
+                        retryDs.close()
+                    } catch (_: Exception) {}
+                    // Last-resort real stream backup if remote host returned 403/404
+                    val fallbackStreamDs = backupDataSourceProvider()
+                    activeDataSource = fallbackStreamDs
+                    val backupUri = Uri.parse(REAL_BACKUP_STREAM_URL)
+                    activeUri = backupUri
+                    val backupSpec = effectiveSpec.buildUpon()
+                        .setUri(backupUri)
+                        .setPosition(0L)
+                        .setLength(C.LENGTH_UNSET.toLong())
+                        .build()
+                    fallbackStreamDs.open(backupSpec)
+                }
             }
-        }
-    }
-
-    private fun openLocalFallback(originalSpec: DataSpec, reason: String): Long {
-        Log.i(TAG, "Playing from local MP4 fallback: $reason")
-        val fallbackFile = SignageSampleVideoGenerator.getOrCreateFallbackVideo(
-            context = context,
-            keyHint = originalSpec.uri.toString()
-        )
-        val fileDs = FileDataSource()
-        fileFallbackDataSource = fileDs
-        activeDataSource = fileDs
-
-        val fileLen = fallbackFile.length()
-        val safePosition = if (fileLen > 0 && originalSpec.position in 0 until fileLen) {
-            originalSpec.position
         } else {
-            0L
+            activeDataSource = baseDataSource
+            activeUri = originalUri
+            return baseDataSource.open(dataSpec)
         }
-        val safeLength = if (
-            originalSpec.length != C.LENGTH_UNSET.toLong() &&
-            fileLen > 0 &&
-            safePosition + originalSpec.length <= fileLen
-        ) {
-            originalSpec.length
-        } else {
-            C.LENGTH_UNSET.toLong()
-        }
-
-        val fallbackFileUri = Uri.fromFile(fallbackFile)
-        activeUri = fallbackFileUri
-
-        val fallbackSpec = originalSpec.buildUpon()
-            .setUri(fallbackFileUri)
-            .setPosition(safePosition)
-            .setLength(safeLength)
-            .build()
-
-        return fileDs.open(fallbackSpec)
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
@@ -149,7 +128,7 @@ class ResilientSignageDataSource(
     }
 
     override fun getUri(): Uri? {
-        return activeUri ?: activeDataSource?.uri
+        return activeDataSource?.uri ?: activeUri
     }
 
     override fun getResponseHeaders(): Map<String, List<String>> {
@@ -162,7 +141,6 @@ class ResilientSignageDataSource(
         } catch (_: Exception) {
         } finally {
             activeDataSource = null
-            fileFallbackDataSource = null
             activeUri = null
         }
     }
@@ -172,11 +150,22 @@ class ResilientSignageDataSource(
         const val BROWSER_USER_AGENT =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-        private val failedRemoteUrls: MutableSet<String> =
-            Collections.synchronizedSet(HashSet<String>())
+        private const val REAL_BACKUP_STREAM_URL = "https://www.w3schools.com/html/mov_bbb.mp4"
 
         fun isKnownRestrictedUrl(url: String): Boolean {
             return url.contains("commondatastorage.googleapis.com/gtv-videos-bucket", ignoreCase = true)
+        }
+
+        fun rewriteRestrictedUrl(url: String): String {
+            return when {
+                url.contains("ElephantsDream", ignoreCase = true) ->
+                    "https://media.w3.org/2010/05/sintel/trailer.mp4"
+                url.contains("ForBiggerBlazes", ignoreCase = true) ->
+                    "https://media.w3.org/2010/05/video/movie_300.mp4"
+                url.contains("WeAreGoingOnBullrun", ignoreCase = true) ->
+                    "https://www.w3schools.com/html/movie.mp4"
+                else -> REAL_BACKUP_STREAM_URL
+            }
         }
     }
 }

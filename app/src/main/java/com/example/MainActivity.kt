@@ -9,26 +9,27 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.auth.SignageAuthGate
 import com.example.service.WatchdogService
 import com.example.ui.SignageScreen
 import com.example.ui.SignageViewModel
+import com.example.ui.orientation.SignageOrientation
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: SignageViewModel by viewModels()
+    private var activeViewModel: SignageViewModel? = null
 
     // Diagnostic key combo tracking: MENU -> UP -> DOWN -> CENTER
     private val keyComboHistory = mutableListOf<Int>()
@@ -48,25 +49,30 @@ class MainActivity : ComponentActivity() {
         // 3. Start 24/7 Watchdog foreground monitor for crash recovery
         WatchdogService.start(this)
 
-        // 4. Dynamically apply Display Orientation (Landscape, Portrait totem, etc.)
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collect { state ->
-                    com.example.ui.orientation.SignageOrientation.applyOrientation(
-                        this@MainActivity,
-                        state.displayOrientation
-                    )
-                }
-            }
-        }
-
         setContent {
             MyApplicationTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    SignageScreen(viewModel = viewModel)
+                    SignageAuthGate { currentUserId ->
+                        val vm: SignageViewModel = viewModel(key = currentUserId)
+                        activeViewModel = vm
+                        val state by vm.uiState.collectAsStateWithLifecycle()
+
+                        LaunchedEffect(currentUserId) {
+                            vm.bindAuthenticatedFirestoreUser(currentUserId)
+                        }
+
+                        LaunchedEffect(state.displayOrientation) {
+                            SignageOrientation.applyOrientation(
+                                this@MainActivity,
+                                state.displayOrientation
+                            )
+                        }
+
+                        SignageScreen(viewModel = vm)
+                    }
                 }
             }
         }
@@ -108,6 +114,7 @@ class MainActivity : ComponentActivity() {
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         WatchdogService.ping(this)
+        val vm = activeViewModel ?: return super.onKeyDown(keyCode, event)
 
         comboResetHandler.removeCallbacks(comboResetRunnable)
         comboResetHandler.postDelayed(comboResetRunnable, 3000L) // 3-second window
@@ -117,7 +124,6 @@ class MainActivity : ComponentActivity() {
             keyComboHistory.removeAt(0)
         }
 
-        // Check if matching hidden diagnostic sequence: MENU + UP + DOWN + OK
         val expectedCombo = listOf(
             KeyEvent.KEYCODE_MENU,
             KeyEvent.KEYCODE_DPAD_UP,
@@ -134,22 +140,20 @@ class MainActivity : ComponentActivity() {
         if (keyComboHistory == expectedCombo || keyComboHistory == expectedComboEnter) {
             Log.i("MainActivity", "Secret diagnostic key combination triggered!")
             keyComboHistory.clear()
-            viewModel.toggleDiagnosticOverlay(true)
+            vm.toggleDiagnosticOverlay(true)
             return true
         }
 
-        // Quick MENU key opens Admin authentication dialog
         if (keyCode == KeyEvent.KEYCODE_MENU) {
-            viewModel.onOpenAdminClicked()
+            vm.onOpenAdminClicked()
             return true
         }
 
-        // If Kiosk Mode is locked, block non-essential keys to prevent unauthorized tampering
-        if (viewModel.uiState.value.isKioskLocked) {
+        if (vm.uiState.value.isKioskLocked) {
             when (keyCode) {
                 KeyEvent.KEYCODE_HOME,
                 KeyEvent.KEYCODE_APP_SWITCH,
-                KeyEvent.KEYCODE_SETTINGS -> return true // Blocked in kiosk
+                KeyEvent.KEYCODE_SETTINGS -> return true
             }
         }
 

@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.cloud.SignageCloudRepository
 import com.example.data.local.db.DeviceLogEntity
 import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
@@ -14,13 +15,16 @@ import com.example.pairing.PairingState
 import com.example.service.WatchdogService
 import com.example.sync.PlaylistSyncWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.net.NetworkInterface
 import java.util.Collections
+
 
 data class SignageUiState(
     val isKioskLocked: Boolean = true,
@@ -60,6 +64,7 @@ data class SignageUiState(
 class SignageViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = SignageRepository(application)
+    private val cloudRepository = SignageCloudRepository(application.applicationContext)
     private val localStore = repository.localStore
     private val pairingManager = repository.pairingManager
     private val database = repository.database
@@ -68,6 +73,9 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     val syncState: StateFlow<SyncState> = repository.syncState
 
     private var activePlayingVideoId: String? = null
+    private var boundFirestoreUserId: String? = null
+    private var firestoreListenerJob: Job? = null
+
 
     private val _uiState = MutableStateFlow(
         SignageUiState(
@@ -110,6 +118,72 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         startBurnInPixelShiftTimer()
         startRealtimeDashboardSyncLoop()
     }
+
+    /**
+     * Binds real-time Cloud Firestore snapshot listeners for the authenticated Google user.
+     */
+    fun bindAuthenticatedFirestoreUser(userId: String) {
+        if (userId.isBlank() || boundFirestoreUserId == userId) return
+        boundFirestoreUserId = userId
+        firestoreListenerJob?.cancel()
+        firestoreListenerJob = viewModelScope.launch(Dispatchers.IO) {
+            // Seed initial playlist & device heartbeat into Firestore for this user
+            try {
+                val currentPlaylist = playlistFlow.value
+                currentPlaylist.items.forEach { item ->
+                    val safeDocId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
+                    cloudRepository.createVideo(
+                        videoId = safeDocId,
+                        title = item.title,
+                        videoUrl = item.videoUrl,
+                        durationSeconds = item.durationSeconds.toLong(),
+                        order = item.order.toLong(),
+                        videoOrientation = "AUTO",
+                        isForcedPlay = false
+                    )
+                }
+                cloudRepository.upsertDeviceHeartbeat(
+                    deviceId = pairingManager.getDeviceId(),
+                    name = pairingManager.getPairedScreenName().ifBlank { "SignageTV (${pairingManager.getPairingCode()})" },
+                    pairCode = pairingManager.getPairingCode(),
+                    status = "PLAYING",
+                    screenOrientation = _uiState.value.displayOrientation.id,
+                    videoOrientation = when (_uiState.value.videoOrientation.degrees) {
+                        90, 270 -> "PORTRAIT"
+                        180 -> "LANDSCAPE"
+                        else -> "AUTO"
+                    },
+                    currentVideoTitle = playlistFlow.value.items.firstOrNull()?.title ?: ""
+                )
+            } catch (_: Exception) {}
+
+            // Listen to real-time broadcast config updates in Cloud Firestore
+            launch {
+                cloudRepository.observeConfig(userId)
+                    .catch { /* logged by handleFirestoreError */ }
+                    .collect { config ->
+                        if (config != null) {
+                            val newDisplay = com.example.ui.orientation.SignageOrientation.fromId(config.orientation)
+                            val newVideoDegrees = when (config.videoOrientation.uppercase()) {
+                                "PORTRAIT" -> 90
+                                "LANDSCAPE" -> 0
+                                else -> 0
+                            }
+                            localStore.setDisplayOrientation(newDisplay.id)
+                            localStore.setVideoOrientation(newVideoDegrees)
+                            localStore.setVideoScaleMode(config.scaleMode)
+                            _uiState.value = _uiState.value.copy(
+                                displayOrientation = newDisplay,
+                                videoOrientation = com.example.ui.orientation.VideoOrientation.fromDegrees(newVideoDegrees),
+                                videoScaleMode = config.scaleMode,
+                                pushedVideoIdToAutoPlay = config.pushedVideoId.takeIf { it.isNotBlank() } ?: _uiState.value.pushedVideoIdToAutoPlay
+                            )
+                        }
+                    }
+            }
+        }
+    }
+
 
     private fun observePairing() {
         viewModelScope.launch {
@@ -309,6 +383,18 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun addVideoToPlaylist(title: String, videoUrl: String, durationSeconds: Int, enableVastAd: Boolean) {
         viewModelScope.launch {
             val newItem = repository.addVideoToPlaylist(title, videoUrl, durationSeconds, enableVastAd)
+            try {
+                val safeDocId = newItem.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
+                cloudRepository.createVideo(
+                    videoId = safeDocId,
+                    title = newItem.title,
+                    videoUrl = newItem.videoUrl,
+                    durationSeconds = newItem.durationSeconds.toLong(),
+                    order = newItem.order.toLong(),
+                    videoOrientation = "AUTO",
+                    isForcedPlay = true
+                )
+            } catch (_: Exception) {}
             _uiState.value = _uiState.value.copy(
                 pushedVideoIdToAutoPlay = newItem.id,
                 pendingOfflinePopupVideo = newItem,
@@ -317,6 +403,7 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             )
         }
     }
+
 
     /**
      * Uploads a local video file picked from the Android device, pushes it to play immediately,
@@ -343,6 +430,19 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun pushPlayVideoNow(videoId: String) {
         viewModelScope.launch {
             repository.pushVideoToPlayNow(videoId)
+            try {
+                cloudRepository.upsertBroadcastConfig(
+                    orientation = _uiState.value.displayOrientation.id,
+                    videoOrientation = when (_uiState.value.videoOrientation.degrees) {
+                        90, 270 -> "PORTRAIT"
+                        else -> "AUTO"
+                    },
+                    scaleMode = _uiState.value.videoScaleMode,
+                    pushedVideoId = videoId,
+                    pushedVideoTimestamp = System.currentTimeMillis(),
+                    version = (playlistFlow.value.version + 1).toLong()
+                )
+            } catch (_: Exception) {}
             _uiState.value = _uiState.value.copy(
                 pushedVideoIdToAutoPlay = videoId,
                 showAdminSettingsPanel = false,
@@ -352,6 +452,7 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             )
         }
     }
+
 
     /**
      * Triggered when user clicks "Download for Offline" in the popup or Admin panel.
@@ -403,8 +504,13 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun removeVideoFromPlaylist(videoId: String) {
         viewModelScope.launch {
             repository.removeVideoFromPlaylist(videoId)
+            try {
+                val safeDocId = videoId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(128)
+                cloudRepository.deleteVideo(safeDocId)
+            } catch (_: Exception) {}
         }
     }
+
 
     fun updateTickerText(newTicker: String) {
         viewModelScope.launch {
@@ -477,8 +583,22 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(displayOrientation = orientation)
         viewModelScope.launch {
             repository.pushDeviceOrientationSettings(screenOrientation = orientation.id)
+            try {
+                cloudRepository.upsertBroadcastConfig(
+                    orientation = orientation.id,
+                    videoOrientation = when (_uiState.value.videoOrientation.degrees) {
+                        90, 270 -> "PORTRAIT"
+                        else -> "AUTO"
+                    },
+                    scaleMode = _uiState.value.videoScaleMode,
+                    pushedVideoId = _uiState.value.pushedVideoIdToAutoPlay ?: "",
+                    pushedVideoTimestamp = System.currentTimeMillis(),
+                    version = (playlistFlow.value.version + 1).toLong()
+                )
+            } catch (_: Exception) {}
         }
     }
+
 
     fun setVideoOrientation(videoOrientation: com.example.ui.orientation.VideoOrientation) {
         localStore.setVideoOrientation(videoOrientation.degrees)

@@ -132,15 +132,12 @@ class SignagePlayerManager(private val context: Context) {
 
                     override fun onPlayerError(error: PlaybackException) {
                         Log.w(TAG, "Recovering from playback notice (${error.errorCodeName}): ${error.message}")
-                        val fallbackFile = SignageSampleVideoGenerator.getOrCreateFallbackVideo(context)
-                        if (SignageSampleVideoGenerator.isValidMp4File(fallbackFile)) {
-                            val fallbackItem = MediaItem.fromUri(Uri.fromFile(fallbackFile))
-                            setMediaItem(fallbackItem)
-                            repeatMode = Player.REPEAT_MODE_ALL
+                        if (mediaItemCount > 1) {
+                            seekToNextMediaItem()
                             prepare()
                             play()
                         } else {
-                            seekToNextMediaItem()
+                            seekToDefaultPosition()
                             prepare()
                             play()
                         }

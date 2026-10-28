@@ -101,12 +101,11 @@ class SignageRepository(private val context: Context) {
         val cached = kotlinx.coroutines.runBlocking {
             loadFromRoomOrCache()
         }
-        val shouldSynthesize = !hasInternetConnection()
         if (cached != null && cached.items.isNotEmpty()) {
-            _playlistFlow.value = resolveLocalFilePaths(cached, autoSynthesizeMissing = shouldSynthesize)
+            _playlistFlow.value = resolveLocalFilePaths(cached)
         } else {
             val def = createDefaultPlaylist()
-            _playlistFlow.value = resolveLocalFilePaths(def, autoSynthesizeMissing = shouldSynthesize)
+            _playlistFlow.value = resolveLocalFilePaths(def)
         }
     }
 
@@ -148,10 +147,7 @@ class SignageRepository(private val context: Context) {
         playlist: PlaylistResponse,
         autoSynthesizeMissing: Boolean = false
     ): PlaylistResponse {
-        val isOnline = hasInternetConnection()
-        if (isOnline) {
-            localStore.purgeSyntheticFallbackVideos()
-        }
+        localStore.purgeSyntheticFallbackVideos()
         val updatedItems = playlist.items.mapIndexed { index, item ->
             val cleanUrl = sanitizeVideoUrl(item.videoUrl, index + 1)
             val sanitizedItem = item.copy(videoUrl = cleanUrl)
@@ -160,18 +156,11 @@ class SignageRepository(private val context: Context) {
                 SignageSampleVideoGenerator.isValidMp4File(File(it))
             }
             val isExplicitOffline = localStore.isVideoOfflineDownloaded(sanitizedItem.id)
-            val finalPath = validExisting ?: if (autoSynthesizeMissing && !isOnline) {
-                SignageSampleVideoGenerator.getOrCreateVideoForItem(
-                    context = context,
-                    item = sanitizedItem,
-                    targetFile = localStore.getLocalVideoFile(sanitizedItem)
-                )?.absolutePath
-            } else {
-                null
-            }
+            val isDirectUpload = sanitizedItem.id.startsWith("vid_upload_")
+            val finalPath = validExisting?.takeIf { isExplicitOffline || isDirectUpload }
             sanitizedItem.copy(
                 localFilePath = finalPath,
-                isOfflineDownloaded = isExplicitOffline && finalPath != null
+                isOfflineDownloaded = (isExplicitOffline || isDirectUpload) && finalPath != null
             )
         }
         return playlist.copy(items = updatedItems)
@@ -770,7 +759,7 @@ class SignageRepository(private val context: Context) {
             }
 
             if (!destFile.exists() || destFile.length() == 0L) {
-                SignageSampleVideoGenerator.getOrCreateFallbackVideo(context, newId).copyTo(destFile, overwrite = true)
+                return@withContext null
             }
 
             // Upload to Web CMS if <= 4 MB so remote screens & web dashboard can stream it too

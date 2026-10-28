@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDisplayOrientation(val) {
+      return val is string && (
+        val == 'LANDSCAPE' ||
+        val == 'PORTRAIT' ||
+        val == 'REVERSE_LANDSCAPE' ||
+        val == 'REVERSE_PORTRAIT'
+      );
+    }
+
+    function isValidVideoOrientation(val) {
+      return val is string && (
+        val == 'AUTO' ||
+        val == 'LANDSCAPE' ||
+        val == 'PORTRAIT'
+      );
+    }
+
+    function isValidScaleMode(val) {
+      return val is string && (
+        val == 'ZOOM' ||
+        val == 'FIT' ||
+        val == 'FILL'
+      );
+    }
+
+    function isValidSignageCloudVideo(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.videoUrl is string && data.videoUrl.size() >= 1 && data.videoUrl.size() <= 2048 &&
+             data.durationSeconds is int && data.durationSeconds >= 1 && data.durationSeconds <= 86400 &&
+             data.order is int && data.order >= 0 && data.order <= 10000 &&
+             isValidVideoOrientation(data.videoOrientation) &&
+             data.isForcedPlay is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSignageCloudDevice(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.deviceId is string && data.deviceId.size() >= 1 && data.deviceId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.pairCode is string && data.pairCode.size() >= 4 && data.pairCode.size() <= 16 &&
+             data.status is string && data.status.size() >= 1 && data.status.size() <= 64 &&
+             isValidDisplayOrientation(data.screenOrientation) &&
+             isValidVideoOrientation(data.videoOrientation) &&
+             data.currentVideoTitle is string && data.currentVideoTitle.size() <= 200 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSignageCloudConfig(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             isValidDisplayOrientation(data.orientation) &&
+             isValidVideoOrientation(data.videoOrientation) &&
+             isValidScaleMode(data.scaleMode) &&
+             data.pushedVideoId is string && data.pushedVideoId.size() <= 128 &&
+             data.pushedVideoTimestamp is int && data.pushedVideoTimestamp >= 0 &&
+             data.version is int && data.version >= 1 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId}/videos/{videoId} {
+      allow get: if isSignedIn() && isValidId(userId) && isValidId(videoId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(videoId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll(['userId', 'title', 'videoUrl', 'durationSeconds', 'order', 'videoOrientation', 'isForcedPlay', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'title', 'videoUrl', 'durationSeconds', 'order', 'videoOrientation', 'isForcedPlay', 'createdAt', 'updatedAt']) &&
+                       isValidSignageCloudVideo(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(videoId) &&
+                       request.auth.uid == userId &&
+                       isValidSignageCloudVideo(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'videoUrl', 'durationSeconds', 'order', 'videoOrientation', 'isForcedPlay', 'updatedAt']);
+
+      allow delete: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(videoId) &&
+                       request.auth.uid == userId &&
+                       existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/devices/{deviceId} {
+      allow get: if isSignedIn() && isValidId(userId) && isValidId(deviceId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(deviceId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll(['userId', 'deviceId', 'name', 'pairCode', 'status', 'screenOrientation', 'videoOrientation', 'currentVideoTitle', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'deviceId', 'name', 'pairCode', 'status', 'screenOrientation', 'videoOrientation', 'currentVideoTitle', 'createdAt', 'updatedAt']) &&
+                       isValidSignageCloudDevice(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(deviceId) &&
+                       request.auth.uid == userId &&
+                       isValidSignageCloudDevice(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().deviceId == existing().deviceId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'pairCode', 'status', 'screenOrientation', 'videoOrientation', 'currentVideoTitle', 'updatedAt']);
+
+      allow delete: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(deviceId) &&
+                       request.auth.uid == userId &&
+                       existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/config/{configId} {
+      allow get: if isSignedIn() && isValidId(userId) && isValidId(configId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(configId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll(['userId', 'orientation', 'videoOrientation', 'scaleMode', 'pushedVideoId', 'pushedVideoTimestamp', 'version', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'orientation', 'videoOrientation', 'scaleMode', 'pushedVideoId', 'pushedVideoTimestamp', 'version', 'createdAt', 'updatedAt']) &&
+                       isValidSignageCloudConfig(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(configId) &&
+                       request.auth.uid == userId &&
+                       isValidSignageCloudConfig(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['orientation', 'videoOrientation', 'scaleMode', 'pushedVideoId', 'pushedVideoTimestamp', 'version', 'updatedAt']);
+
+      allow delete: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidId(configId) &&
+                       request.auth.uid == userId &&
+                       existing().userId == request.auth.uid;
+    }
+  }
+}
