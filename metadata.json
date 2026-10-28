@@ -1,0 +1,6 @@
+{
+  "name": "SignageTV",
+  "description": "Android TV digital signage app with gapless video looping, Google IMA VAST ads, periodic cloud sync with WorkManager, kiosk mode, and auto-start on boot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

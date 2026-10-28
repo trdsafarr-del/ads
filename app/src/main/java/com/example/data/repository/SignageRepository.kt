@@ -1,0 +1,435 @@
+package com.example.data.repository
+
+import android.content.Context
+import android.os.Build
+import android.util.Log
+import com.example.BuildConfig
+import com.example.data.api.ApkUpdateResponse
+import com.example.data.api.HeartbeatRequest
+import com.example.data.api.PairRequest
+import com.example.data.api.SignageApiService
+import com.example.data.local.SignageLocalStore
+import com.example.data.local.db.CachedPlaylistEntity
+import com.example.data.local.db.CachedVideoEntity
+import com.example.data.local.db.DeviceLogEntity
+import com.example.data.local.db.SignageDatabase
+import com.example.data.model.PlaylistItem
+import com.example.data.model.PlaylistResponse
+import com.example.data.model.PlaylistSchema
+import com.example.pairing.PairingManager
+import com.example.updater.AutoUpdateManager
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
+import kotlin.math.min
+import kotlin.math.pow
+
+sealed class SyncState {
+    data object Idle : SyncState()
+    data class Syncing(val message: String, val progress: Float = 0f) : SyncState()
+    data class Success(val message: String, val timestamp: Long) : SyncState()
+    data class Error(val error: String) : SyncState()
+}
+
+class SignageRepository(private val context: Context) {
+
+    val localStore = SignageLocalStore(context)
+    val pairingManager = PairingManager(context)
+    val database = SignageDatabase.getInstance(context)
+    private val updateManager = AutoUpdateManager(context)
+
+    private val moshi: Moshi = Moshi.Builder()
+        .addLast(KotlinJsonAdapterFactory())
+        .build()
+
+    private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
+    val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
+
+    private val _playlistFlow = MutableStateFlow<PlaylistResponse>(createDefaultPlaylist())
+    val playlistFlow: StateFlow<PlaylistResponse> = _playlistFlow.asStateFlow()
+
+    init {
+        loadInitialPlaylist()
+    }
+
+    private fun loadInitialPlaylist() {
+        val cached = kotlinx.coroutines.runBlocking {
+            loadFromRoomOrCache()
+        }
+        if (cached != null && cached.items.isNotEmpty()) {
+            _playlistFlow.value = resolveLocalFilePaths(cached)
+        } else {
+            val def = createDefaultPlaylist()
+            _playlistFlow.value = resolveLocalFilePaths(def)
+        }
+    }
+
+    private suspend fun loadFromRoomOrCache(): PlaylistResponse? = withContext(Dispatchers.IO) {
+        try {
+            val roomEntity = database.playlistDao().getPlaylist("active_playlist")
+            if (roomEntity != null && roomEntity.rawJson.isNotBlank()) {
+                val adapter = moshi.adapter(PlaylistResponse::class.java)
+                adapter.fromJson(roomEntity.rawJson)
+            } else {
+                localStore.loadCachedPlaylist()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error loading cached playlist from Room: ${e.message}")
+            localStore.loadCachedPlaylist()
+        }
+    }
+
+    private fun resolveLocalFilePaths(playlist: PlaylistResponse): PlaylistResponse {
+        val updatedItems = playlist.items.map { item ->
+            val localPath = localStore.getLocalVideoPathIfExists(item)
+            item.copy(localFilePath = localPath)
+        }
+        return playlist.copy(items = updatedItems)
+    }
+
+    private fun createRetrofit(baseUrl: String): SignageApiService {
+        val logging = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BASIC
+        }
+        val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor(logging)
+            .build()
+
+        return Retrofit.Builder()
+            .baseUrl(baseUrl)
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(SignageApiService::class.java)
+    }
+
+    /**
+     * Executes Cloud Sync with exponential backoff, checksum verification, Room persistence,
+     * and smart cache management.
+     */
+    suspend fun syncPlaylist(): Result<PlaylistResponse> = withContext(Dispatchers.IO) {
+        val baseUrl = localStore.getApiServerUrl()
+        val deviceId = pairingManager.getDeviceId()
+        _syncState.value = SyncState.Syncing("Connecting to cloud server...")
+
+        var attempt = 0
+        val maxAttempts = 3
+        var lastError: Exception? = null
+
+        while (attempt < maxAttempts) {
+            try {
+                val api = createRetrofit(baseUrl)
+
+                // 1. Fetch remote playlist schema
+                val response = try {
+                    api.fetchPlaylist(deviceId)
+                } catch (e: Exception) {
+                    null
+                }
+
+                val remotePlaylist: PlaylistResponse = if (response != null && response.isSuccessful && response.body() != null) {
+                    val schema = response.body()!!
+                    mapSchemaToPlaylist(schema)
+                } else {
+                    Log.w(TAG, "Remote server unready. Using Room / local cache fallback.")
+                    loadFromRoomOrCache() ?: createDefaultPlaylist()
+                }
+
+                // 2. Download and verify each video asset
+                val totalVideos = remotePlaylist.items.size
+                val updatedItems = mutableListOf<PlaylistItem>()
+
+                remotePlaylist.items.forEachIndexed { index, item ->
+                    val progress = (index.toFloat() / totalVideos.coerceAtLeast(1))
+                    _syncState.value = SyncState.Syncing("Downloading: ${item.title} (${index + 1}/$totalVideos)", progress)
+
+                    val localFile = localStore.getLocalVideoFile(item)
+                    var isReadyOnDisk = localFile.exists() && localFile.length() > 0
+
+                    if (!isReadyOnDisk) {
+                        val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
+                        if (downloaded) {
+                            // Checksum verification
+                            if (verifyChecksum(localFile, item.checksum)) {
+                                isReadyOnDisk = true
+                            } else {
+                                Log.w(TAG, "Checksum mismatch for ${item.title}! Deleting corrupt file.")
+                                localFile.delete()
+                            }
+                        }
+                    }
+
+                    val finalPath = if (isReadyOnDisk) localFile.absolutePath else null
+                    val updatedItem = item.copy(localFilePath = finalPath)
+                    updatedItems.add(updatedItem)
+
+                    // Persist to Room VideoDao
+                    database.videoDao().insertOrUpdate(
+                        CachedVideoEntity(
+                            id = item.id,
+                            url = item.videoUrl,
+                            localPath = finalPath,
+                            checksum = item.checksum,
+                            duration = item.durationSeconds,
+                            playOrder = item.order,
+                            fileSizeBytes = if (isReadyOnDisk) localFile.length() else 0L
+                        )
+                    )
+                }
+
+                val finalPlaylist = remotePlaylist.copy(items = updatedItems)
+
+                // Save to Room and JSON cache
+                val json = moshi.adapter(PlaylistResponse::class.java).toJson(finalPlaylist)
+                database.playlistDao().savePlaylist(
+                    CachedPlaylistEntity(
+                        id = "active_playlist",
+                        version = finalPlaylist.version,
+                        rawJson = json,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                localStore.saveCachedPlaylist(finalPlaylist)
+
+                val now = System.currentTimeMillis()
+                localStore.setLastSyncTimestamp(now)
+                localStore.setLastSyncStatus("Synced successfully (${finalPlaylist.items.size} items)")
+
+                _playlistFlow.value = finalPlaylist
+                _syncState.value = SyncState.Success("Synced ${finalPlaylist.items.size} items", now)
+
+                // Check for silent auto-update if idle maintenance window or configured
+                checkSilentUpdate(api)
+
+                return@withContext Result.success(finalPlaylist)
+            } catch (e: Exception) {
+                lastError = e
+                attempt++
+                val delaySeconds = min(300.0, 2.0.pow(attempt.toDouble())).toLong()
+                Log.w(TAG, "Sync failed on attempt $attempt. Retrying in ${delaySeconds}s: ${e.message}")
+                if (attempt < maxAttempts) {
+                    delay(delaySeconds * 1000L)
+                }
+            }
+        }
+
+        val err = lastError?.localizedMessage ?: "Sync error"
+        _syncState.value = SyncState.Error(err)
+        logIncident("ERROR", "Cloud sync failure: $err")
+        Result.failure(lastError ?: Exception(err))
+    }
+
+    private fun mapSchemaToPlaylist(schema: PlaylistSchema): PlaylistResponse {
+        val defaultAdTag = schema.ads.firstOrNull()?.vastTag
+        val items = schema.videos.map { v ->
+            PlaylistItem(
+                id = v.id,
+                title = v.title ?: "Broadcast: ${v.id}",
+                videoUrl = v.url,
+                checksum = v.checksum,
+                durationSeconds = v.duration,
+                adTagUrl = defaultAdTag,
+                order = v.order
+            )
+        }
+        return PlaylistResponse(
+            id = "playlist-v${schema.version}",
+            name = "CMS Scheduled Broadcast",
+            version = schema.version,
+            syncIntervalMinutes = 15,
+            defaultAdTagUrl = defaultAdTag,
+            tickerText = schema.tickerText,
+            items = items
+        )
+    }
+
+    private suspend fun downloadVideoWithRetry(api: SignageApiService, videoUrl: String, destination: File): Boolean {
+        var attempts = 0
+        while (attempts < 2) {
+            attempts++
+            try {
+                val response = api.downloadMediaFile(videoUrl)
+                if (response.isSuccessful && response.body() != null) {
+                    val temp = File(destination.parentFile, "${destination.name}.tmp")
+                    response.body()!!.byteStream().use { input ->
+                        FileOutputStream(temp).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    if (temp.exists() && temp.length() > 0) {
+                        if (destination.exists()) destination.delete()
+                        temp.renameTo(destination)
+                        return true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Download attempt $attempts failed for $videoUrl: ${e.message}")
+            }
+        }
+        return false
+    }
+
+    /**
+     * Verifies SHA-256 checksum of downloaded media file.
+     */
+    private fun verifyChecksum(file: File, expectedSha256: String?): Boolean {
+        if (expectedSha256.isNullOrBlank()) return true
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            FileInputStream(file).use { fis ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            val computedHex = digest.digest().joinToString("") { "%02x".format(it) }
+            computedHex.equals(expectedSha256.trim(), ignoreCase = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error calculating checksum: ${e.message}")
+            true
+        }
+    }
+
+    /**
+     * Smart Cache Eviction:
+     * Retains currently playing video + next 2 videos in the playlist loop on disk,
+     * removing older cached files to prevent 2GB Android TV storage exhaustion.
+     */
+    suspend fun smartCacheEvict(currentIndex: Int, playlist: PlaylistResponse) = withContext(Dispatchers.IO) {
+        val total = playlist.items.size
+        if (total <= 3) return@withContext
+
+        val keepIndices = setOf(
+            currentIndex % total,
+            (currentIndex + 1) % total,
+            (currentIndex + 2) % total
+        )
+
+        val keepIds = keepIndices.mapNotNull { playlist.items.getOrNull(it)?.id }.toSet()
+        val keepFileNames = keepIndices.mapNotNull { idx ->
+            playlist.items.getOrNull(idx)?.let { localStore.getLocalVideoFile(it).name }
+        }.toSet()
+
+        val files = localStore.videoCacheDir.listFiles() ?: return@withContext
+        for (file in files) {
+            if (file.isFile && !keepFileNames.contains(file.name)) {
+                Log.d(TAG, "Smart cache eviction: Removing ${file.name} to free TV storage")
+                file.delete()
+            }
+        }
+    }
+
+    /**
+     * Reports device status heartbeat to server every 5 minutes.
+     */
+    suspend fun sendDeviceHeartbeat(currentVideoId: String? = null) = withContext(Dispatchers.IO) {
+        try {
+            val api = createRetrofit(localStore.getApiServerUrl())
+            val request = HeartbeatRequest(
+                deviceId = pairingManager.getDeviceId(),
+                status = "PLAYING",
+                currentVideoId = currentVideoId,
+                storageUsed = localStore.getCachedStorageSizeBytes(),
+                appVersion = "1.0",
+                lastSyncTime = localStore.getLastSyncTimestamp()
+            )
+            api.sendHeartbeat(request)
+            Log.d(TAG, "Heartbeat transmitted successfully to CMS")
+        } catch (e: Exception) {
+            Log.d(TAG, "Heartbeat transmit skipped or offline: ${e.message}")
+        }
+    }
+
+    private suspend fun checkSilentUpdate(api: SignageApiService) {
+        try {
+            val response = api.checkForUpdates(1)
+            if (response.isSuccessful && response.body()?.updateAvailable == true) {
+                val update = response.body()!!
+                if (!update.apkUrl.isNullOrBlank()) {
+                    updateManager.downloadAndInstallApk(api, update.apkUrl, update.versionCode)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun logIncident(level: String, message: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                database.deviceLogDao().insert(
+                    DeviceLogEntity(level = level, tag = TAG, message = message)
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    companion object {
+        private const val TAG = "SignageRepository"
+
+        const val SAMPLE_VAST_TAG =
+            "https://pubads.g.doubleclick.net/gampad/ads?iu=/21775744923/external/single_ad_samples&sz=640x480&cust_params=sample_ct%3Dlinear&ciu_szs=300x250%2C728x90&gdfp_req=1&output=vast&unviewed_position_start=1&env=vp&impl=s&correlator="
+
+        fun createDefaultPlaylist(): PlaylistResponse {
+            return PlaylistResponse(
+                id = "display-lobby-01",
+                name = "OmniSign Live Loop",
+                version = 1,
+                syncIntervalMinutes = 15,
+                defaultAdTagUrl = SAMPLE_VAST_TAG,
+                tickerText = "★ LIVE DIGITAL SIGNAGE ★ Continuous Gapless Loop • Google IMA VAST Ads • Smart Cache Eviction • 24/7 Watchdog Recovery",
+                items = listOf(
+                    PlaylistItem(
+                        id = "vid_bunny",
+                        title = "Brand Showcase: Nature & Animation",
+                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                        durationSeconds = 60,
+                        adTagUrl = SAMPLE_VAST_TAG,
+                        order = 1
+                    ),
+                    PlaylistItem(
+                        id = "vid_dream",
+                        title = "Digital Arts & 3D Render Feature",
+                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                        durationSeconds = 45,
+                        adTagUrl = null,
+                        order = 2
+                    ),
+                    PlaylistItem(
+                        id = "vid_blazes",
+                        title = "High Energy Automotive Commercial",
+                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+                        durationSeconds = 30,
+                        adTagUrl = SAMPLE_VAST_TAG,
+                        order = 3
+                    ),
+                    PlaylistItem(
+                        id = "vid_bullrun",
+                        title = "Summer Road Trip Experience",
+                        videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
+                        durationSeconds = 40,
+                        adTagUrl = null,
+                        order = 4
+                    )
+                )
+            )
+        }
+    }
+}

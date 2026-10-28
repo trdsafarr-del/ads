@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Monitor Stand -->
+    <path
+        android:fillColor="#415A77"
+        android:pathData="M48,76 h12 v4 h-12 z M42,80 h24 v3 h-24 z" />
+
+    <!-- Screen Bezel -->
+    <path
+        android:fillColor="#1B263B"
+        android:pathData="M24,28 h60 a4,4 0 0,1 4,4 v40 a4,4 0 0,1 -4,4 h-60 a4,4 0 0,1 -4,-4 v-40 a4,4 0 0,1 4,-4 z" />
+
+    <!-- Screen Inner Display -->
+    <path
+        android:fillColor="#0D1B2A"
+        android:pathData="M27,31 h54 v38 h-54 z" />
+
+    <!-- Play Symbol / Signage Loop Badge (Cyan) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M46,40 L64,50 L46,60 Z" />
+
+    <!-- Live Broadcast Indicator Dot (Amber/Coral) -->
+    <path
+        android:fillColor="#FF5252"
+        android:pathData="M73,35 a3,3 0 1,0 0.001,0 Z" />
+
+    <!-- Signal waves -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M31,35 h6 v2 h-6 z M31,39 h10 v2 h-10 z" />
+</vector>

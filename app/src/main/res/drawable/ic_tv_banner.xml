@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:pathData="M0,0h320v180h-320z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="320"
+                android:endY="180"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#0A1118" />
+                <item android:offset="1.0" android:color="#1B263B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Screen Accent -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M0,176 h320 v4 h-320 z" />
+    <!-- TV monitor silhouette -->
+    <path
+        android:fillColor="#415A77"
+        android:pathData="M148,125 h24 v10 h-24 z M138,135 h44 v5 h-44 z" />
+    <path
+        android:fillColor="#1B263B"
+        android:pathData="M110,45 h100 a6,6 0 0,1 6,6 v68 a6,6 0 0,1 -6,6 h-100 a6,6 0 0,1 -6,-6 v-68 a6,6 0 0,1 6,-6 z" />
+    <path
+        android:fillColor="#0D1B2A"
+        android:pathData="M116,51 h88 v56 h-88 z" />
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M150,65 L174,79 L150,93 Z" />
+    <path
+        android:fillColor="#FF5252"
+        android:pathData="M192,57 a4,4 0 1,0 0.001,0 Z" />
+</vector>

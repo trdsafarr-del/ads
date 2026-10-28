@@ -1,0 +1,77 @@
+package com.example.data.api
+
+import com.example.data.model.PlaylistSchema
+import com.squareup.moshi.Json
+import com.squareup.moshi.JsonClass
+import okhttp3.ResponseBody
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.GET
+import retrofit2.http.POST
+import retrofit2.http.Query
+import retrofit2.http.Streaming
+import retrofit2.http.Url
+
+@JsonClass(generateAdapter = true)
+data class HeartbeatRequest(
+    @Json(name = "deviceId") val deviceId: String,
+    @Json(name = "status") val status: String,
+    @Json(name = "currentVideoId") val currentVideoId: String?,
+    @Json(name = "storageUsed") val storageUsed: Long,
+    @Json(name = "appVersion") val appVersion: String,
+    @Json(name = "lastSyncTime") val lastSyncTime: Long
+)
+
+@JsonClass(generateAdapter = true)
+data class HeartbeatResponse(
+    @Json(name = "acknowledged") val acknowledged: Boolean = true,
+    @Json(name = "serverAction") val serverAction: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PairRequest(
+    @Json(name = "deviceId") val deviceId: String,
+    @Json(name = "pairingCode") val pairingCode: String,
+    @Json(name = "deviceInfo") val deviceInfo: String
+)
+
+@JsonClass(generateAdapter = true)
+data class PairResponse(
+    @Json(name = "success") val success: Boolean = false,
+    @Json(name = "deviceToken") val deviceToken: String? = null,
+    @Json(name = "organizationId") val organizationId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ApkUpdateResponse(
+    @Json(name = "updateAvailable") val updateAvailable: Boolean = false,
+    @Json(name = "versionCode") val versionCode: Int = 1,
+    @Json(name = "versionName") val versionName: String = "1.0",
+    @Json(name = "apkUrl") val apkUrl: String? = null
+)
+
+interface SignageApiService {
+    @GET("api/playlist")
+    suspend fun fetchPlaylist(
+        @Query("deviceId") deviceId: String
+    ): Response<PlaylistSchema>
+
+    @POST("api/devices/heartbeat")
+    suspend fun sendHeartbeat(
+        @Body heartbeat: HeartbeatRequest
+    ): Response<HeartbeatResponse>
+
+    @POST("api/devices/pair")
+    suspend fun pairDevice(
+        @Body pairRequest: PairRequest
+    ): Response<PairResponse>
+
+    @GET("api/updates/check")
+    suspend fun checkForUpdates(
+        @Query("versionCode") currentVersionCode: Int
+    ): Response<ApkUpdateResponse>
+
+    @Streaming
+    @GET
+    suspend fun downloadMediaFile(@Url fileUrl: String): Response<ResponseBody>
+}
