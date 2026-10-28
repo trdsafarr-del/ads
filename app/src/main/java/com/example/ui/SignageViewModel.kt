@@ -128,7 +128,16 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun onMediaItemAdvanced(currentIndex: Int, currentPlaylist: PlaylistResponse) {
         viewModelScope.launch {
             repository.smartCacheEvict(currentIndex, currentPlaylist)
-            repository.sendDeviceHeartbeat(currentPlaylist.items.getOrNull(currentIndex)?.id)
+            val action = repository.sendDeviceHeartbeat(currentPlaylist.items.getOrNull(currentIndex)?.id)
+            if (!action.isNullOrBlank()) {
+                _uiState.value = _uiState.value.copy(
+                    displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
+                    videoScaleMode = localStore.getVideoScaleMode(),
+                    cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
+                    lastSyncStatus = localStore.getLastSyncStatus(),
+                    lastSyncTimestamp = localStore.getLastSyncTimestamp()
+                )
+            }
         }
     }
 
@@ -141,10 +150,29 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
 
     fun pollPairingStatus() {
         viewModelScope.launch {
-            // Check if server confirmed pairing
-            if (pairingManager.isPaired()) {
+            val paired = repository.pollRemotePairing()
+            if (paired || pairingManager.isPaired()) {
                 _uiState.value = _uiState.value.copy(isPaired = true)
+                triggerCloudSync()
             }
+        }
+    }
+
+    fun addVideoToPlaylist(title: String, videoUrl: String, durationSeconds: Int, enableVastAd: Boolean) {
+        viewModelScope.launch {
+            repository.addVideoToPlaylist(title, videoUrl, durationSeconds, enableVastAd)
+        }
+    }
+
+    fun removeVideoFromPlaylist(videoId: String) {
+        viewModelScope.launch {
+            repository.removeVideoFromPlaylist(videoId)
+        }
+    }
+
+    fun updateTickerText(newTicker: String) {
+        viewModelScope.launch {
+            repository.updateTickerText(newTicker)
         }
     }
 

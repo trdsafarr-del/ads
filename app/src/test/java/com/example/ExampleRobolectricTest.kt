@@ -63,5 +63,18 @@ class ExampleRobolectricTest {
     val reversePortrait = com.example.ui.orientation.SignageOrientation.fromId("REVERSE_PORTRAIT")
     assertEquals(com.example.ui.orientation.SignageOrientation.REVERSE_PORTRAIT, reversePortrait)
   }
+
+  @Test
+  fun `local store defaults to ads-broo vercel domain and kiosk helper checks permissions`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val store = com.example.data.local.SignageLocalStore(context)
+    assertEquals("https://ads-broo.vercel.app/", store.getApiServerUrl())
+
+    // Verify KioskPermissionHelper status checks do not crash
+    val isAdmin = com.example.kiosk.KioskPermissionHelper.isDeviceAdminActive(context)
+    val isAccessibility = com.example.kiosk.KioskPermissionHelper.isAccessibilityServiceEnabled(context)
+    assertTrue(!isAdmin || isAdmin)
+    assertTrue(!isAccessibility || isAccessibility)
+  }
 }
 

@@ -65,10 +65,11 @@ fun DevicePairingScreen(
     onOpenAdmin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Poll server every 10 seconds for pairing confirmation
+    // Poll server immediately and every 6 seconds for pairing confirmation
     LaunchedEffect(Unit) {
+        onPollPairing()
         while (true) {
-            delay(10_000L)
+            delay(6_000L)
             onPollPairing()
         }
     }
@@ -140,7 +141,7 @@ fun DevicePairingScreen(
                 )
 
                 Text(
-                    text = "Enter this 6-digit code in your Digital Signage CMS Dashboard to link this TV.",
+                    text = "Open https://ads-broo.vercel.app/ and enter this 6-digit code to pair & control this TV remotely.",
                     color = TextSecondary,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(top = 6.dp)

@@ -11,7 +11,8 @@ data class VideoItem(
     @Json(name = "duration") val duration: Int = 30,
     @Json(name = "checksum") val checksum: String? = null,
     @Json(name = "localFilePath") val localFilePath: String? = null,
-    @Json(name = "title") val title: String? = null
+    @Json(name = "title") val title: String? = null,
+    @Json(name = "adTagUrl") val adTagUrl: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -33,5 +34,7 @@ data class PlaylistSchema(
     @Json(name = "videos") val videos: List<VideoItem> = emptyList(),
     @Json(name = "ads") val ads: List<AdItem> = emptyList(),
     @Json(name = "schedule") val schedule: List<ScheduleItem> = emptyList(),
-    @Json(name = "tickerText") val tickerText: String? = null
+    @Json(name = "tickerText") val tickerText: String? = null,
+    @Json(name = "orientation") val orientation: String? = null,
+    @Json(name = "scaleMode") val scaleMode: String? = null
 )

@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SignageTV Cloud CMS — ads-broo.vercel.app</title>
+  <style>
+    :root {
+      --bg: #080c14;
+      --surface: #111827;
+      --card: #161f33;
+      --border: #24324d;
+      --cyan: #00e5ff;
+      --blue: #2979ff;
+      --emerald: #00e676;
+      --amber: #ffab00;
+      --coral: #ff5252;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    header {
+      background: rgba(17, 24, 39, 0.92);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(12px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .logo-badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(41, 121, 255, 0.3));
+      border: 1px solid var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      color: var(--cyan);
+      font-size: 18px;
+    }
+    .brand h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
+    .brand p { font-size: 12px; color: var(--muted); }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(0, 230, 118, 0.12);
+      border: 1px solid rgba(0, 230, 118, 0.4);
+      color: var(--emerald);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 10px var(--emerald);
+    }
+    .container {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 22px;
+    }
+    @media (max-width: 980px) {
+      .container { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 22px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 680px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .stat-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+    .stat-val { font-size: 22px; font-weight: 800; color: var(--text); margin-top: 4px; }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--cyan);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn-cyan { background: var(--cyan); color: #020617; }
+    .btn-blue { background: var(--blue); color: #fff; }
+    .btn-emerald { background: var(--emerald); color: #020617; }
+    .btn-coral { background: rgba(255, 82, 82, 0.18); color: var(--coral); border: 1px solid var(--coral); }
+    .btn-outline { background: transparent; color: var(--cyan); border: 1px solid var(--cyan); }
+    .btn:hover { transform: translateY(-1px); opacity: 0.94; }
+    .video-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .video-meta h4 { font-size: 14px; font-weight: 700; color: #fff; }
+    .video-meta p { font-size: 11px; color: var(--muted); word-break: break-all; }
+    .badge {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-weight: 700;
+      background: rgba(0, 229, 255, 0.15);
+      color: var(--cyan);
+    }
+    .device-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #0f172a;
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 700;
+      display: none;
+      z-index: 100;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+    }
+    pre {
+      background: #050811;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 11px;
+      color: #a5f3fc;
+      overflow-x: auto;
+      max-height: 240px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo-badge">TV</div>
+      <div>
+        <h1>SignageTV Cloud CMS Dashboard</h1>
+        <p>Live Remote Control & Playlist Server • <strong style="color:var(--cyan);">https://ads-broo.vercel.app/</strong></p>
+      </div>
+    </div>
+    <div class="row">
+      <a href="/api/playlist" target="_blank" class="btn btn-outline" style="text-decoration:none;">View /api/playlist JSON</a>
+      <button class="btn btn-cyan" onclick="publishAllChanges()">Publish & Push to TVs</button>
+      <div class="status-pill"><span class="dot"></span> API Server Online</div>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Left Column: Playlist, Orientation, Ticker, VAST Ads -->
+    <div>
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-label">Playlist Version</div>
+          <div class="stat-val" id="statVersion">v1</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Active Videos</div>
+          <div class="stat-val" id="statVideos">4</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Screen Mode</div>
+          <div class="stat-val" id="statOrientation">LANDSCAPE</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Paired TVs</div>
+          <div class="stat-val" id="statDevices">1</div>
+        </div>
+      </div>
+
+      <!-- Playlist Manager -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">1. Video Loop Playlist Manager (Gapless ExoPlayer)</span>
+          <span class="badge" id="videoCountBadge">4 Items</span>
+        </div>
+
+        <div id="videoListContainer"></div>
+
+        <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);">
+          <h4 style="font-size: 13px; margin-bottom: 10px; color: var(--emerald);">+ Add New MP4 Video to Signage Loop</h4>
+          <div class="row">
+            <div style="flex: 1; min-width: 200px;">
+              <label>Video Campaign Title</label>
+              <input type="text" id="newVideoTitle" placeholder="e.g., Showroom Special Offer" />
+            </div>
+            <div style="width: 110px;">
+              <label>Duration (sec)</label>
+              <input type="number" id="newVideoDuration" value="30" />
+            </div>
+          </div>
+          <label>Direct MP4 Video URL (Cached Offline by Android TV WorkManager)</label>
+          <input type="text" id="newVideoUrl" placeholder="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" />
+          <div class="row" style="justify-content: space-between;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:#fff;">
+              <input type="checkbox" id="newVideoVast" checked /> Enable Google IMA VAST Ad Pre-Roll on this video
+            </label>
+            <button class="btn btn-emerald" onclick="addVideoItem()">+ Add Video & Publish</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Orientation & Ticker Settings -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">2. Display Orientation (Landscape / Portrait) & Live News Ticker</span>
+        </div>
+        <div class="row">
+          <div style="flex: 1; min-width: 210px;">
+            <label>TV Mounting Orientation</label>
+            <select id="orientationSelect" onchange="publishAllChanges()">
+              <option value="LANDSCAPE">Landscape (16:9 Standard Horizontal TV)</option>
+              <option value="PORTRAIT">Portrait (9:16 Vertical Totem / Standee)</option>
+              <option value="REVERSE_LANDSCAPE">Reverse Landscape (180° Inverted)</option>
+              <option value="REVERSE_PORTRAIT">Reverse Portrait (270° Vertical)</option>
+              <option value="AUTO">Auto Sensor Rotation</option>
+            </select>
+          </div>
+          <div style="flex: 1; min-width: 210px;">
+            <label>Video Aspect Scale Mode</label>
+            <select id="scaleModeSelect" onchange="publishAllChanges()">
+              <option value="ZOOM">ZOOM — Fill Screen & Crop (No Black Bars)</option>
+              <option value="FIT">FIT — Fit Center (Preserve Aspect Ratio)</option>
+              <option value="FILL">FILL — Stretch 100%</option>
+            </select>
+          </div>
+        </div>
+
+        <label>Bottom Crawling News & Promo Ticker Text</label>
+        <input type="text" id="tickerInput" placeholder="Enter scrolling ticker message..." />
+
+        <label>Google IMA VAST Ad Tag URL (Pre-Roll / Mid-Roll)</label>
+        <input type="text" id="vastInput" placeholder="https://pubads.g.doubleclick.net/..." />
+
+        <button class="btn btn-cyan" onclick="publishAllChanges()">Save & Sync Configuration to TVs</button>
+      </div>
+    </div>
+
+    <!-- Right Column: TV Device Pairing, Live Remote Commands & JSON Inspector -->
+    <div>
+      <!-- 6-Digit TV Pairing -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">3. Pair Android TV (6-Digit Code)</span>
+          <span class="badge">Auto-Approve Active</span>
+        </div>
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">
+          Enter the 6-digit code shown on your Android TV screen to link it with <strong>ads-broo.vercel.app</strong>:
+        </p>
+        <div class="row">
+          <div style="flex: 1;">
+            <input type="text" id="pairCodeInput" maxlength="6" placeholder="e.g., 482910" style="font-size: 18px; font-weight: 800; letter-spacing: 4px; text-align: center; margin-bottom:0;" />
+          </div>
+          <div style="flex: 1;">
+            <input type="text" id="pairDeviceName" placeholder="Screen Name (e.g., Lobby TV)" style="margin-bottom:0;" />
+          </div>
+          <button class="btn btn-cyan" onclick="approvePairingCode()">Pair TV Now</button>
+        </div>
+      </div>
+
+      <!-- Remote Device Operations -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">4. Live Remote TV Controls (24x7 Kiosk)</span>
+          <button class="btn btn-outline" style="padding: 4px 10px; font-size: 11px;" onclick="loadDashboardData()">Refresh</button>
+        </div>
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">
+          Send instant remote commands to all connected Android TVs on next heartbeat/sync:
+        </p>
+        <div class="row" style="margin-bottom: 16px;">
+          <button class="btn btn-blue" onclick="sendRemoteCommand('pushSync')">Force Cloud Sync</button>
+          <button class="btn btn-outline" onclick="sendRemoteCommand('setLandscape')">Set Landscape (16:9)</button>
+          <button class="btn btn-outline" onclick="sendRemoteCommand('setPortrait')">Set Portrait (9:16)</button>
+          <button class="btn btn-coral" onclick="sendRemoteCommand('clearCache')">Purge TV Cache</button>
+        </div>
+
+        <div id="devicesListContainer"></div>
+      </div>
+
+      <!-- Live API Schema Preview -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">5. Live /api/playlist Payload</span>
+        </div>
+        <pre id="jsonPreview">Loading playlist schema...</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toastMsg">Saved & synced!</div>
+
+  <script>
+    let currentState = {
+      version: 1,
+      orientation: 'LANDSCAPE',
+      scaleMode: 'ZOOM',
+      tickerText: '',
+      ads: [],
+      videos: []
+    };
+
+    function showToast(msg) {
+      const el = document.getElementById('toastMsg');
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 3200);
+    }
+
+    async function loadDashboardData() {
+      try {
+        const [playlistRes, pairRes] = await Promise.all([
+          fetch('/api/playlist'),
+          fetch('/api/devices/pair')
+        ]);
+        const playlist = await playlistRes.json();
+        const pairData = await pairRes.json();
+
+        currentState = playlist;
+        renderPlaylist(playlist);
+        renderDevices(pairData.devices || []);
+      } catch (e) {
+        console.error('Error loading CMS data:', e);
+      }
+    }
+
+    function renderPlaylist(playlist) {
+      document.getElementById('statVersion').textContent = 'v' + (playlist.version || 1);
+      document.getElementById('statVideos').textContent = (playlist.videos || []).length;
+      document.getElementById('statOrientation').textContent = playlist.orientation || 'LANDSCAPE';
+      document.getElementById('videoCountBadge').textContent = (playlist.videos || []).length + ' Videos';
+
+      document.getElementById('orientationSelect').value = playlist.orientation || 'LANDSCAPE';
+      document.getElementById('scaleModeSelect').value = playlist.scaleMode || 'ZOOM';
+      document.getElementById('tickerInput').value = playlist.tickerText || '';
+      document.getElementById('vastInput').value =
+        (playlist.ads && playlist.ads[0] && playlist.ads[0].vastTag) || '';
+
+      const container = document.getElementById('videoListContainer');
+      container.innerHTML = '';
+
+      (playlist.videos || []).forEach((v, idx) => {
+        const div = document.createElement('div');
+        div.className = 'video-item';
+        div.innerHTML = `
+          <div class="video-meta">
+            <h4>#${idx + 1} — ${v.title || v.id} ${v.adTagUrl ? '<span class="badge">VAST Ad</span>' : ''}</h4>
+            <p>${v.url} • <strong>${v.duration || 30}s</strong></p>
+          </div>
+          <div class="row">
+            <button class="btn btn-coral" style="padding:6px 10px; font-size:11px;" onclick="removeVideoItem('${v.id}')">Delete</button>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+
+      document.getElementById('jsonPreview').textContent = JSON.stringify(playlist, null, 2);
+    }
+
+    function renderDevices(devices) {
+      document.getElementById('statDevices').textContent = devices.length;
+      const container = document.getElementById('devicesListContainer');
+      if (!devices.length) {
+        container.innerHTML = `
+          <div class="device-card">
+            <div style="font-size:13px; font-weight:700; color:var(--cyan);">Waiting for Android TV Heartbeat...</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">
+              Your Android TV app is pre-configured with <strong>https://ads-broo.vercel.app/</strong>. Open the app or click "Sync Now" in Admin Settings to connect immediately.
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = devices.map(d => {
+        const mb = ((d.storageUsed || 0) / (1024 * 1024)).toFixed(1);
+        const ago = d.lastSeen ? Math.max(1, Math.round((Date.now() - d.lastSeen) / 1000)) + 's ago' : 'just now';
+        return `
+          <div class="device-card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>${d.deviceName || d.deviceId}</strong>
+              <span class="badge" style="background:rgba(0,230,118,0.15); color:var(--emerald);">${d.status || 'ONLINE'}</span>
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">
+              ID: <code>${d.deviceId}</code> • Playing: <strong>${d.currentVideoId || 'Looping'}</strong> • Cache: ${mb} MB • Seen: ${ago}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function publishAllChanges() {
+      const orientation = document.getElementById('orientationSelect').value;
+      const scaleMode = document.getElementById('scaleModeSelect').value;
+      const tickerText = document.getElementById('tickerInput').value;
+      const vastTag = document.getElementById('vastInput').value;
+
+      const payload = {
+        videos: currentState.videos,
+        orientation,
+        scaleMode,
+        tickerText,
+        vastTag
+      };
+
+      const res = await fetch('/api/playlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.playlist) {
+        currentState = data.playlist;
+        renderPlaylist(currentState);
+        showToast('Published Playlist v' + currentState.version + ' to https://ads-broo.vercel.app/');
+      }
+    }
+
+    async function addVideoItem() {
+      const title = document.getElementById('newVideoTitle').value.trim() || 'Signage Broadcast';
+      const url = document.getElementById('newVideoUrl').value.trim();
+      const duration = Number(document.getElementById('newVideoDuration').value) || 30;
+      const enableVast = document.getElementById('newVideoVast').checked;
+      const vastTag = document.getElementById('vastInput').value.trim();
+
+      if (!url) {
+        showToast('Please enter a valid MP4 Video URL');
+        return;
+      }
+
+      currentState.videos = currentState.videos || [];
+      currentState.videos.push({
+        id: 'vid_' + Date.now(),
+        title,
+        url,
+        duration,
+        order: currentState.videos.length + 1,
+        adTagUrl: enableVast ? vastTag : null
+      });
+
+      document.getElementById('newVideoTitle').value = '';
+      document.getElementById('newVideoUrl').value = '';
+      await publishAllChanges();
+    }
+
+    async function removeVideoItem(id) {
+      if ((currentState.videos || []).length <= 1) {
+        showToast('At least 1 video must remain in the loop');
+        return;
+      }
+      currentState.videos = currentState.videos.filter(v => v.id !== id);
+      await publishAllChanges();
+    }
+
+    async function approvePairingCode() {
+      const code = document.getElementById('pairCodeInput').value.trim();
+      const deviceName = document.getElementById('pairDeviceName').value.trim();
+      if (!code) {
+        showToast('Enter the 6-digit code from your TV');
+        return;
+      }
+      await fetch('/api/devices/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approveCode', pairingCode: code, deviceName })
+      });
+      document.getElementById('pairCodeInput').value = '';
+      showToast('6-Digit TV Code ' + code + ' Approved!');
+      loadDashboardData();
+    }
+
+    async function sendRemoteCommand(action) {
+      const res = await fetch('/api/devices/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: '*', action })
+      });
+      const data = await res.json();
+      showToast(data.message || ('Command sent: ' + action));
+      loadDashboardData();
+    }
+
+    loadDashboardData();
+    setInterval(loadDashboardData, 8000);
+  </script>
+</body>
+</html>

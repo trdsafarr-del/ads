@@ -239,6 +239,12 @@ class SignageRepository(private val context: Context) {
 
     private fun mapSchemaToPlaylist(schema: PlaylistSchema): PlaylistResponse {
         val defaultAdTag = schema.ads.firstOrNull()?.vastTag
+        if (!schema.orientation.isNullOrBlank()) {
+            localStore.setDisplayOrientation(schema.orientation)
+        }
+        if (!schema.scaleMode.isNullOrBlank()) {
+            localStore.setVideoScaleMode(schema.scaleMode)
+        }
         val items = schema.videos.map { v ->
             PlaylistItem(
                 id = v.id,
@@ -246,7 +252,7 @@ class SignageRepository(private val context: Context) {
                 videoUrl = v.url,
                 checksum = v.checksum,
                 durationSeconds = v.duration,
-                adTagUrl = defaultAdTag,
+                adTagUrl = v.adTagUrl ?: defaultAdTag,
                 order = v.order
             )
         }
@@ -259,6 +265,94 @@ class SignageRepository(private val context: Context) {
             tickerText = schema.tickerText,
             items = items
         )
+    }
+
+    /**
+     * Polls remote CMS server (https://ads-broo.vercel.app/api/devices/pair) for 6-digit pairing confirmation.
+     */
+    suspend fun pollRemotePairing(): Boolean = withContext(Dispatchers.IO) {
+        if (pairingManager.isPaired()) return@withContext true
+        try {
+            val api = createRetrofit(localStore.getApiServerUrl())
+            val response = api.pairDevice(
+                PairRequest(
+                    deviceId = pairingManager.getDeviceId(),
+                    pairingCode = pairingManager.getPairingCode(),
+                    deviceInfo = "Android TV (${Build.MANUFACTURER} ${Build.MODEL})"
+                )
+            )
+            val body = response.body()
+            if (response.isSuccessful && body != null && body.success) {
+                val token = body.deviceToken ?: "cms_token_${System.currentTimeMillis()}"
+                pairingManager.confirmPairing(token)
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Pairing poll awaiting CMS confirmation: ${e.message}")
+        }
+        false
+    }
+
+    /**
+     * Allows operator to add a video directly from Admin Settings Panel or local CMS.
+     */
+    suspend fun addVideoToPlaylist(
+        title: String,
+        videoUrl: String,
+        durationSeconds: Int = 30,
+        enableVastAd: Boolean = false
+    ) = withContext(Dispatchers.IO) {
+        val current = _playlistFlow.value
+        val newOrder = (current.items.maxOfOrNull { it.order } ?: 0) + 1
+        val newItem = PlaylistItem(
+            id = "vid_custom_${System.currentTimeMillis()}",
+            title = title.ifBlank { "Custom Broadcast #$newOrder" },
+            videoUrl = videoUrl.trim(),
+            durationSeconds = durationSeconds.coerceAtLeast(5),
+            adTagUrl = if (enableVastAd) (current.defaultAdTagUrl ?: SAMPLE_VAST_TAG) else null,
+            order = newOrder
+        )
+        val updatedPlaylist = current.copy(
+            version = current.version + 1,
+            items = current.items + newItem
+        )
+        persistUpdatedPlaylist(updatedPlaylist)
+    }
+
+    suspend fun removeVideoFromPlaylist(videoId: String) = withContext(Dispatchers.IO) {
+        val current = _playlistFlow.value
+        if (current.items.size <= 1) return@withContext
+        val updatedItems = current.items.filterNot { it.id == videoId }
+            .mapIndexed { idx, item -> item.copy(order = idx + 1) }
+        val updatedPlaylist = current.copy(
+            version = current.version + 1,
+            items = updatedItems
+        )
+        persistUpdatedPlaylist(updatedPlaylist)
+    }
+
+    suspend fun updateTickerText(newTicker: String) = withContext(Dispatchers.IO) {
+        val current = _playlistFlow.value
+        val updatedPlaylist = current.copy(
+            version = current.version + 1,
+            tickerText = newTicker
+        )
+        persistUpdatedPlaylist(updatedPlaylist)
+    }
+
+    private suspend fun persistUpdatedPlaylist(playlist: PlaylistResponse) {
+        val resolved = resolveLocalFilePaths(playlist)
+        val json = moshi.adapter(PlaylistResponse::class.java).toJson(resolved)
+        database.playlistDao().savePlaylist(
+            CachedPlaylistEntity(
+                id = "active_playlist",
+                version = resolved.version,
+                rawJson = json,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+        localStore.saveCachedPlaylist(resolved)
+        _playlistFlow.value = resolved
     }
 
     private suspend fun downloadVideoWithRetry(api: SignageApiService, videoUrl: String, destination: File): Boolean {
@@ -324,7 +418,6 @@ class SignageRepository(private val context: Context) {
             (currentIndex + 2) % total
         )
 
-        val keepIds = keepIndices.mapNotNull { playlist.items.getOrNull(it)?.id }.toSet()
         val keepFileNames = keepIndices.mapNotNull { idx ->
             playlist.items.getOrNull(idx)?.let { localStore.getLocalVideoFile(it).name }
         }.toSet()
@@ -339,9 +432,9 @@ class SignageRepository(private val context: Context) {
     }
 
     /**
-     * Reports device status heartbeat to server every 5 minutes.
+     * Reports device status heartbeat to server every 5 minutes and processes queued remote CMS commands.
      */
-    suspend fun sendDeviceHeartbeat(currentVideoId: String? = null) = withContext(Dispatchers.IO) {
+    suspend fun sendDeviceHeartbeat(currentVideoId: String? = null): String? = withContext(Dispatchers.IO) {
         try {
             val api = createRetrofit(localStore.getApiServerUrl())
             val request = HeartbeatRequest(
@@ -352,10 +445,21 @@ class SignageRepository(private val context: Context) {
                 appVersion = "1.0",
                 lastSyncTime = localStore.getLastSyncTimestamp()
             )
-            api.sendHeartbeat(request)
-            Log.d(TAG, "Heartbeat transmitted successfully to CMS")
+            val response = api.sendHeartbeat(request)
+            val action = response.body()?.serverAction
+            if (!action.isNullOrBlank()) {
+                when (action) {
+                    "pushSync" -> syncPlaylist()
+                    "clearCache" -> localStore.cleanupUnusedVideos(emptyList())
+                    "setPortrait" -> localStore.setDisplayOrientation("PORTRAIT")
+                    "setLandscape" -> localStore.setDisplayOrientation("LANDSCAPE")
+                }
+            }
+            Log.d(TAG, "Heartbeat transmitted successfully to CMS (action=$action)")
+            action
         } catch (e: Exception) {
             Log.d(TAG, "Heartbeat transmit skipped or offline: ${e.message}")
+            null
         }
     }
 

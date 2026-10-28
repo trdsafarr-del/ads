@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">SignageTV</string>
+    <string name="accessibility_service_description">Keeps SignageTV Digital Signage player running 24/7 in foreground Kiosk mode, automatically recovers from crashes or popups, and intercepts unauthorized remote exits.</string>
+    <string name="device_admin_description">Allows SignageTV to enforce 24/7 Kiosk lock, prevent unauthorized uninstallation, and manage display lock state.</string>
 </resources>

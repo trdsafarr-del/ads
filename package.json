@@ -1,0 +1,9 @@
+{
+  "name": "signagetv-cloud-cms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SignageTV Cloud CMS Dashboard & Serverless API for https://ads-broo.vercel.app/",
+  "scripts": {
+    "build": "echo 'Static public/ and Serverless api/ ready for Vercel'"
+  }
+}

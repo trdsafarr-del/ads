@@ -27,11 +27,17 @@ class SignageLocalStore(private val context: Context) {
         }
 
     fun getApiServerUrl(): String {
-        return prefs.getString(KEY_API_SERVER_URL, DEFAULT_API_URL) ?: DEFAULT_API_URL
+        val stored = prefs.getString(KEY_API_SERVER_URL, DEFAULT_API_URL) ?: DEFAULT_API_URL
+        if (stored.isBlank() || stored.contains("mock-signage.example.com")) {
+            prefs.edit().putString(KEY_API_SERVER_URL, DEFAULT_API_URL).apply()
+            return DEFAULT_API_URL
+        }
+        return stored
     }
 
     fun setApiServerUrl(url: String) {
-        val normalized = if (!url.endsWith("/")) "$url/" else url
+        val trimmed = url.trim().ifEmpty { DEFAULT_API_URL }
+        val normalized = if (!trimmed.endsWith("/")) "$trimmed/" else trimmed
         prefs.edit().putString(KEY_API_SERVER_URL, normalized).apply()
     }
 
@@ -180,7 +186,7 @@ class SignageLocalStore(private val context: Context) {
         private const val KEY_DISPLAY_ORIENTATION = "display_orientation"
         private const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
 
-        const val DEFAULT_API_URL = "https://mock-signage.example.com/"
+        const val DEFAULT_API_URL = "https://ads-broo.vercel.app/"
         const val DEFAULT_ADMIN_PIN = "1234"
         private const val CACHED_PLAYLIST_FILE = "cached_signage_playlist.json"
     }

@@ -209,6 +209,15 @@ fun SignageScreen(
                 lastSyncStatus = uiState.lastSyncStatus,
                 cacheSizeBytes = uiState.cacheSizeBytes,
                 onClearCache = { viewModel.clearLocalCache() },
+                onAddVideoToPlaylist = { title, url, dur, vast ->
+                    viewModel.addVideoToPlaylist(title, url, dur, vast)
+                },
+                onRemoveVideoFromPlaylist = { videoId ->
+                    viewModel.removeVideoFromPlaylist(videoId)
+                },
+                onUpdateTickerText = { ticker ->
+                    viewModel.updateTickerText(ticker)
+                },
                 onExitKioskApp = {
                     (context as? Activity)?.finish()
                 },
