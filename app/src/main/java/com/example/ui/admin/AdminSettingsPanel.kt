@@ -7,6 +7,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,29 +19,27 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.StayCurrentLandscape
+import androidx.compose.material.icons.filled.StayCurrentPortrait
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -56,15 +55,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
+import com.example.ui.orientation.SignageOrientation
 import com.example.ui.theme.AmberAccent
 import com.example.ui.theme.CoralRed
 import com.example.ui.theme.ElectricBlue
@@ -83,6 +81,10 @@ import java.util.Locale
 @Composable
 fun AdminSettingsPanel(
     playlist: PlaylistResponse,
+    currentOrientation: SignageOrientation,
+    onSelectOrientation: (SignageOrientation) -> Unit,
+    currentScaleMode: String,
+    onSelectScaleMode: (String) -> Unit,
     isKioskLocked: Boolean,
     onToggleKioskLock: (Boolean) -> Unit,
     isAutoBootEnabled: Boolean,
@@ -115,10 +117,11 @@ fun AdminSettingsPanel(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(580.dp)
+            .widthIn(min = 340.dp, max = 580.dp)
+            .fillMaxWidth(0.92f)
             .background(SignageDarkBg.copy(alpha = 0.98f))
             .border(1.dp, SignageSurfaceVariant)
-            .padding(24.dp)
+            .padding(20.dp)
             .testTag("admin_settings_panel")
     ) {
         Column(modifier = Modifier.fillMaxHeight()) {
@@ -147,11 +150,11 @@ fun AdminSettingsPanel(
                         Text(
                             text = "Signage Control Center",
                             color = Color.White,
-                            fontSize = 18.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Kiosk, Auto-Start & Media Loop Management",
+                            text = "Landscape & Portrait Totem Management",
                             color = TextSecondary,
                             fontSize = 11.sp
                         )
@@ -170,15 +173,138 @@ fun AdminSettingsPanel(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Section 1: Auto-Start & TV Kiosk Permissions
+                // Section 1: Display Orientation & Screen Mount (Landscape vs Portrait)
+                item {
+                    AdminSectionCard(title = "Display Orientation (Landscape / Portrait)") {
+                        Text(
+                            text = "Mounting angle (Supports Vertical Totem 9:16 and Horizontal 16:9):",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SignageOrientation.entries.forEach { orientation ->
+                                val isSelected = (orientation == currentOrientation)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            if (isSelected) NeonCyan.copy(alpha = 0.15f) else SignageSurface,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) NeonCyan else Color.Transparent,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { onSelectOrientation(orientation) }
+                                        .padding(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = if (orientation == SignageOrientation.PORTRAIT || orientation == SignageOrientation.REVERSE_PORTRAIT)
+                                                        Icons.Default.StayCurrentPortrait
+                                                    else Icons.Default.StayCurrentLandscape,
+                                                    contentDescription = null,
+                                                    tint = if (isSelected) NeonCyan else TextSecondary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = orientation.title,
+                                                    color = if (isSelected) NeonCyan else Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                )
+                                            }
+                                            Text(
+                                                text = orientation.description,
+                                                color = TextMuted,
+                                                fontSize = 10.sp,
+                                                modifier = Modifier.padding(start = 24.dp, top = 2.dp)
+                                            )
+                                        }
+
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = "Selected",
+                                                tint = NeonCyan,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Video Aspect Ratio Scale Mode
+                        Text(
+                            text = "Video Scaling on Vertical/Horizontal Screen:",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                Triple("ZOOM", "Fill & Crop", "No black bars"),
+                                Triple("FIT", "Fit Center", "Preserves 16:9/9:16"),
+                                Triple("FILL", "Stretch", "Fills 100%")
+                            ).forEach { (mode, label, desc) ->
+                                val isSelected = currentScaleMode.equals(mode, ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(
+                                            if (isSelected) ElectricBlue.copy(alpha = 0.25f) else SignageSurface,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) ElectricBlue else Color.Transparent,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { onSelectScaleMode(mode) }
+                                        .padding(8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = label,
+                                            color = if (isSelected) ElectricBlue else Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(text = desc, color = TextMuted, fontSize = 9.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 2: Auto-Start & TV Kiosk Permissions
                 item {
                     AdminSectionCard(title = "Auto-Start & Kiosk Status") {
                         // Overlay Permission (TCL / Android TV)
@@ -233,7 +359,7 @@ fun AdminSettingsPanel(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Default TV Launcher Setting
                         Row(
@@ -258,7 +384,7 @@ fun AdminSettingsPanel(
                                     )
                                 }
                                 Text(
-                                    text = "Manifest registered with CATEGORY_HOME. Press HOME on TV remote to set as default.",
+                                    text = "Manifest registered with CATEGORY_HOME. Set as default TV launcher.",
                                     color = TextSecondary,
                                     fontSize = 11.sp
                                 )
@@ -278,7 +404,7 @@ fun AdminSettingsPanel(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Auto-boot toggle
                         Row(
@@ -294,7 +420,7 @@ fun AdminSettingsPanel(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "BOOT_COMPLETED receiver + Foreground Service starts app on power on",
+                                    text = "BOOT_COMPLETED receiver + Foreground Service launches app",
                                     color = TextSecondary,
                                     fontSize = 11.sp
                                 )
@@ -309,7 +435,7 @@ fun AdminSettingsPanel(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Kiosk Mode Back Button Lock
                         Row(
@@ -342,10 +468,9 @@ fun AdminSettingsPanel(
                     }
                 }
 
-                // Section 2: Cloud Sync & WorkManager
+                // Section 3: Cloud Sync & WorkManager
                 item {
                     AdminSectionCard(title = "Cloud Sync & WorkManager") {
-                        // REST API URL Configuration
                         Text(
                             text = "Backend REST API Endpoint",
                             color = Color.White,
@@ -392,7 +517,7 @@ fun AdminSettingsPanel(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Sync Status & Trigger
                         Row(
@@ -411,7 +536,7 @@ fun AdminSettingsPanel(
                                     SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault()).format(Date(lastSyncTime))
                                 } else "Never"
                                 Text(
-                                    text = "Last synced: $syncDateStr (Periodic WorkManager: 15 min)",
+                                    text = "Last synced: $syncDateStr",
                                     color = TextMuted,
                                     fontSize = 11.sp
                                 )
@@ -429,7 +554,7 @@ fun AdminSettingsPanel(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Local Storage Cache Info
                         val cacheMb = cacheSizeBytes / (1024f * 1024f)
@@ -458,61 +583,7 @@ fun AdminSettingsPanel(
                             ) {
                                 Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = CoralRed, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Purge Cache", fontSize = 11.sp, color = CoralRed)
-                            }
-                        }
-                    }
-                }
-
-                // Section 3: Active Playlist Items & VAST Ads
-                item {
-                    AdminSectionCard(title = "Playlist Items (${playlist.items.size} videos)") {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            playlist.items.forEachIndexed { idx, item ->
-                                val isCached = !item.localFilePath.isNullOrBlank()
-                                val hasAd = !item.adTagUrl.isNullOrBlank()
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(SignageSurface, RoundedCornerShape(8.dp))
-                                        .padding(10.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "${idx + 1}. ${item.title}",
-                                                color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1
-                                            )
-                                            Row(
-                                                modifier = Modifier.padding(top = 2.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (isCached) "Cached Offline" else "Streaming",
-                                                    color = if (isCached) EmeraldGreen else AmberAccent,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                                if (hasAd) {
-                                                    Text(
-                                                        text = "• Google IMA VAST Ad",
-                                                        color = NeonCyan,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                Text("Purge", fontSize = 11.sp, color = CoralRed)
                             }
                         }
                     }
@@ -541,7 +612,7 @@ fun AdminSettingsPanel(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
                         // Exit Kiosk App
                         Button(
@@ -575,7 +646,7 @@ private fun AdminSectionCard(
         colors = CardDefaults.cardColors(containerColor = SignageCard),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Text(
                 text = title,
                 color = NeonCyan,
@@ -583,7 +654,7 @@ private fun AdminSectionCard(
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             content()
         }
     }

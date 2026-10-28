@@ -48,4 +48,20 @@ class ExampleRobolectricTest {
     assertEquals(defaultPlaylist.id, parsed?.id)
     assertEquals(defaultPlaylist.items.size, parsed?.items?.size)
   }
+
+  @Test
+  fun `signage orientation supports landscape and portrait totem modes`() {
+    val portrait = com.example.ui.orientation.SignageOrientation.fromId("PORTRAIT")
+    assertEquals(com.example.ui.orientation.SignageOrientation.PORTRAIT, portrait)
+
+    val landscape = com.example.ui.orientation.SignageOrientation.fromId("LANDSCAPE")
+    assertEquals(com.example.ui.orientation.SignageOrientation.LANDSCAPE, landscape)
+
+    val reverseLandscape = com.example.ui.orientation.SignageOrientation.fromId("REVERSE_LANDSCAPE")
+    assertEquals(com.example.ui.orientation.SignageOrientation.REVERSE_LANDSCAPE, reverseLandscape)
+
+    val reversePortrait = com.example.ui.orientation.SignageOrientation.fromId("REVERSE_PORTRAIT")
+    assertEquals(com.example.ui.orientation.SignageOrientation.REVERSE_PORTRAIT, reversePortrait)
+  }
 }
+

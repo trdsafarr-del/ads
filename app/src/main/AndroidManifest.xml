@@ -40,7 +40,7 @@
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleInstance"
-            android:screenOrientation="landscape"
+            android:screenOrientation="unspecified"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:theme="@style/Theme.MyApplication">
             <!-- Standard Android Launcher & Leanback TV Launcher -->

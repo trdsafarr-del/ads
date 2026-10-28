@@ -1,5 +1,6 @@
 package com.example.player
 
+import android.app.Activity
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
@@ -17,9 +18,16 @@ import androidx.media3.ui.PlayerView
 @Composable
 fun VideoLoopView(
     playerManager: SignagePlayerManager,
+    scaleMode: String = "ZOOM",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    val targetResizeMode = when (scaleMode.uppercase()) {
+        "FIT" -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        "FILL" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    }
 
     AndroidView(
         modifier = modifier.fillMaxSize(),
@@ -30,12 +38,14 @@ fun VideoLoopView(
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
                 useController = false
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                resizeMode = targetResizeMode
                 keepScreenOn = true
-                playerManager.initialize(this, ctx as? android.app.Activity)
+                playerManager.initialize(this, ctx as? Activity)
             }
         },
-        update = { /* Updates handled via playerManager */ }
+        update = { view ->
+            view.resizeMode = targetResizeMode
+        }
     )
 
     DisposableEffect(Unit) {

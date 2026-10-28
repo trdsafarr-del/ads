@@ -115,6 +115,7 @@ fun SignageScreen(
             // 1. Full-screen Video Loop View with ExoPlayer & Google IMA Ads
             VideoLoopView(
                 playerManager = playerManager,
+                scaleMode = uiState.videoScaleMode,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -191,6 +192,10 @@ fun SignageScreen(
         ) {
             AdminSettingsPanel(
                 playlist = playlist,
+                currentOrientation = uiState.displayOrientation,
+                onSelectOrientation = { viewModel.setDisplayOrientation(it) },
+                currentScaleMode = uiState.videoScaleMode,
+                onSelectScaleMode = { viewModel.setVideoScaleMode(it) },
                 isKioskLocked = uiState.isKioskLocked,
                 onToggleKioskLock = { viewModel.toggleKioskLock(it) },
                 isAutoBootEnabled = uiState.isAutoBootEnabled,

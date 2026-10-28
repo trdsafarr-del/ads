@@ -99,6 +99,22 @@ class SignageLocalStore(private val context: Context) {
         prefs.edit().putBoolean(KEY_BURN_IN_PROTECTION, enabled).apply()
     }
 
+    fun getDisplayOrientation(): String {
+        return prefs.getString(KEY_DISPLAY_ORIENTATION, "LANDSCAPE") ?: "LANDSCAPE"
+    }
+
+    fun setDisplayOrientation(orientationName: String) {
+        prefs.edit().putString(KEY_DISPLAY_ORIENTATION, orientationName).apply()
+    }
+
+    fun getVideoScaleMode(): String {
+        return prefs.getString(KEY_VIDEO_SCALE_MODE, "ZOOM") ?: "ZOOM"
+    }
+
+    fun setVideoScaleMode(scaleMode: String) {
+        prefs.edit().putString(KEY_VIDEO_SCALE_MODE, scaleMode).apply()
+    }
+
     suspend fun saveCachedPlaylist(playlist: PlaylistResponse) = withContext(Dispatchers.IO) {
         try {
             val file = File(context.filesDir, CACHED_PLAYLIST_FILE)
@@ -161,6 +177,8 @@ class SignageLocalStore(private val context: Context) {
         private const val KEY_TICKER_ENABLED = "ticker_enabled"
         private const val KEY_STARTUP_DELAY = "startup_delay"
         private const val KEY_BURN_IN_PROTECTION = "burn_in_protection"
+        private const val KEY_DISPLAY_ORIENTATION = "display_orientation"
+        private const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
 
         const val DEFAULT_API_URL = "https://mock-signage.example.com/"
         const val DEFAULT_ADMIN_PIN = "1234"

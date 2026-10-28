@@ -94,7 +94,10 @@ fun SignageHeaderBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             // Left: Channel info & current playing title
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.weight(1f, fill = false).padding(end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 // Live status dot
                 Box(
                     modifier = Modifier

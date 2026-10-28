@@ -39,7 +39,9 @@ data class SignageUiState(
     val ipAddress: String = "127.0.0.1",
     val recentLogs: List<DeviceLogEntity> = emptyList(),
     val burnInShiftX: Float = 0f,
-    val burnInShiftY: Float = 0f
+    val burnInShiftY: Float = 0f,
+    val displayOrientation: com.example.ui.orientation.SignageOrientation = com.example.ui.orientation.SignageOrientation.LANDSCAPE,
+    val videoScaleMode: String = "ZOOM"
 )
 
 class SignageViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,7 +68,9 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             deviceId = pairingManager.getDeviceId(),
             pairingCode = pairingManager.getPairingCode(),
             isPaired = pairingManager.isPaired(),
-            ipAddress = getLocalIpAddress()
+            ipAddress = getLocalIpAddress(),
+            displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
+            videoScaleMode = localStore.getVideoScaleMode()
         )
     )
     val uiState: StateFlow<SignageUiState> = _uiState.asStateFlow()
@@ -207,6 +211,16 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun toggleTicker(enabled: Boolean) {
         localStore.setTickerEnabled(enabled)
         _uiState.value = _uiState.value.copy(isTickerEnabled = enabled)
+    }
+
+    fun setDisplayOrientation(orientation: com.example.ui.orientation.SignageOrientation) {
+        localStore.setDisplayOrientation(orientation.id)
+        _uiState.value = _uiState.value.copy(displayOrientation = orientation)
+    }
+
+    fun setVideoScaleMode(scaleMode: String) {
+        localStore.setVideoScaleMode(scaleMode)
+        _uiState.value = _uiState.value.copy(videoScaleMode = scaleMode)
     }
 
     fun saveApiUrl(url: String) {

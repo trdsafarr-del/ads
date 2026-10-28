@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -82,7 +84,8 @@ fun DiagnosticOverlay(
     ) {
         Card(
             modifier = Modifier
-                .width(860.dp)
+                .widthIn(max = 860.dp)
+                .fillMaxWidth(0.96f)
                 .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SignageDarkBg),
@@ -143,16 +146,38 @@ fun DiagnosticOverlay(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Telemetry Grid
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    DiagnosticMetricBox("Device ID", deviceId, modifier = Modifier.weight(1f))
-                    DiagnosticMetricBox("IP Address", ipAddress, modifier = Modifier.weight(1f))
-                    DiagnosticMetricBox("Active Video", currentVideoId.ifEmpty { "None" }, modifier = Modifier.weight(1f))
-                    DiagnosticMetricBox("Disk Cache", "${"%.1f".format(cacheMb)} MB", modifier = Modifier.weight(1f))
-                    DiagnosticMetricBox("App Version", "v$appVersion", modifier = Modifier.weight(1f))
+                // Telemetry Grid (Adaptive for Portrait & Landscape)
+                androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    if (maxWidth < 620.dp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DiagnosticMetricBox("Device ID", deviceId, modifier = Modifier.weight(1f))
+                                DiagnosticMetricBox("IP Address", ipAddress, modifier = Modifier.weight(1f))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DiagnosticMetricBox("Active Video", currentVideoId.ifEmpty { "None" }, modifier = Modifier.weight(1f))
+                                DiagnosticMetricBox("Disk Cache", "${"%.1f".format(cacheMb)} MB", modifier = Modifier.weight(1f))
+                                DiagnosticMetricBox("App Version", "v$appVersion", modifier = Modifier.weight(1f))
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            DiagnosticMetricBox("Device ID", deviceId, modifier = Modifier.weight(1f))
+                            DiagnosticMetricBox("IP Address", ipAddress, modifier = Modifier.weight(1f))
+                            DiagnosticMetricBox("Active Video", currentVideoId.ifEmpty { "None" }, modifier = Modifier.weight(1f))
+                            DiagnosticMetricBox("Disk Cache", "${"%.1f".format(cacheMb)} MB", modifier = Modifier.weight(1f))
+                            DiagnosticMetricBox("App Version", "v$appVersion", modifier = Modifier.weight(1f))
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))

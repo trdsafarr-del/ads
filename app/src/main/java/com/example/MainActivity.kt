@@ -17,6 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import com.example.service.WatchdogService
 import com.example.ui.SignageScreen
 import com.example.ui.SignageViewModel
@@ -43,6 +47,18 @@ class MainActivity : ComponentActivity() {
 
         // 3. Start 24/7 Watchdog foreground monitor for crash recovery
         WatchdogService.start(this)
+
+        // 4. Dynamically apply Display Orientation (Landscape, Portrait totem, etc.)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state ->
+                    com.example.ui.orientation.SignageOrientation.applyOrientation(
+                        this@MainActivity,
+                        state.displayOrientation
+                    )
+                }
+            }
+        }
 
         setContent {
             MyApplicationTheme {
