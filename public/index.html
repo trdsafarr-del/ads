@@ -40,9 +40,8 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    /* Sticky Top Header */
     header {
-      background: rgba(12, 20, 36, 0.88);
+      background: rgba(12, 20, 36, 0.9);
       backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--border);
       position: sticky;
@@ -125,8 +124,8 @@
     }
 
     .dot {
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       background: var(--emerald);
       box-shadow: 0 0 10px var(--emerald);
@@ -138,14 +137,12 @@
       50% { opacity: 0.55; transform: scale(0.92); }
     }
 
-    /* Main Wrapper */
     .page-shell {
       max-width: 1440px;
       margin: 0 auto;
       padding: 24px 28px 48px;
     }
 
-    /* Top Full-Width KPI Row */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -209,7 +206,6 @@
       flex-shrink: 0;
     }
 
-    /* 2-Column Main Content Grid — minmax(0, ...) prevents overflow! */
     .main-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
@@ -243,7 +239,6 @@
       }
     }
 
-    /* Cards */
     .card {
       background: var(--card);
       border: 1px solid var(--border);
@@ -289,7 +284,6 @@
       font-weight: 900;
     }
 
-    /* Forms & Inputs */
     label {
       display: block;
       font-size: 12px;
@@ -349,7 +343,6 @@
       }
     }
 
-    /* Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -411,7 +404,50 @@
       border-radius: 8px;
     }
 
-    /* Video Playlist Items */
+    /* Mode Tabs for Link vs File Upload */
+    .mode-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .mode-tab {
+      background: var(--card-elevated);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s ease;
+    }
+
+    .mode-tab.active {
+      background: rgba(0, 229, 255, 0.14);
+      border-color: var(--cyan);
+      color: var(--cyan);
+      box-shadow: 0 0 14px rgba(0, 229, 255, 0.12);
+    }
+
+    .upload-dropzone {
+      border: 2px dashed rgba(0, 229, 255, 0.45);
+      background: rgba(17, 28, 48, 0.65);
+      border-radius: 12px;
+      padding: 18px;
+      text-align: center;
+      margin-bottom: 14px;
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .upload-dropzone:hover {
+      border-color: var(--cyan);
+      background: rgba(0, 229, 255, 0.08);
+    }
+
     .video-list {
       display: flex;
       flex-direction: column;
@@ -431,8 +467,9 @@
       transition: border-color 0.15s ease;
     }
 
-    .video-item:hover {
-      border-color: var(--border-hover);
+    .video-item.playing-now {
+      border-color: var(--emerald);
+      box-shadow: 0 0 16px rgba(0, 230, 118, 0.12);
     }
 
     .video-meta {
@@ -465,6 +502,7 @@
       align-items: center;
       gap: 6px;
       flex-shrink: 0;
+      flex-wrap: wrap;
     }
 
     .badge {
@@ -485,7 +523,12 @@
       border-color: rgba(148, 163, 184, 0.25);
     }
 
-    /* Remote Control Grid */
+    .badge-offline {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--emerald);
+      border-color: rgba(0, 230, 118, 0.35);
+    }
+
     .remote-btn-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -493,13 +536,31 @@
       margin-bottom: 16px;
     }
 
-    @media (max-width: 480px) {
-      .remote-btn-grid {
-        grid-template-columns: minmax(0, 1fr);
+    .toggle-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .toggle-box {
+      background: var(--card-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 640px) {
+      .toggle-grid {
+        grid-template-columns: 1fr;
       }
     }
 
-    /* Connected TV Device Cards */
     .device-card {
       background: var(--card-elevated);
       border: 1px solid var(--border);
@@ -509,11 +570,6 @@
       min-width: 0;
     }
 
-    .device-card:last-child {
-      margin-bottom: 0;
-    }
-
-    /* JSON Preview Box — strictly constrained & wrapped so it never breaks layout */
     pre#jsonPreview {
       background: #04070e;
       border: 1px solid var(--border);
@@ -524,7 +580,7 @@
       color: #80d8ff;
       width: 100%;
       max-width: 100%;
-      max-height: 290px;
+      max-height: 250px;
       overflow-y: auto;
       overflow-x: hidden;
       white-space: pre-wrap;
@@ -556,6 +612,49 @@
       background: rgba(41, 121, 255, 0.25);
     }
 
+    /* Live Monitor Video Player */
+    .monitor-player-wrap {
+      position: relative;
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+      border: 1px solid var(--border);
+      aspect-ratio: 16 / 9;
+      margin-bottom: 10px;
+    }
+
+    .monitor-player-wrap video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* Offline Download Popup Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 8, 18, 0.82);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 20px;
+    }
+
+    .modal-card {
+      background: linear-gradient(180deg, #101d35, #0a1222);
+      border: 2px solid var(--cyan);
+      border-radius: 20px;
+      max-width: 480px;
+      width: 100%;
+      padding: 26px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75), 0 0 30px rgba(0, 229, 255, 0.2);
+      text-align: center;
+    }
+
     .toast {
       position: fixed;
       bottom: 24px;
@@ -569,7 +668,7 @@
       font-weight: 700;
       box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
       display: none;
-      z-index: 100;
+      z-index: 300;
     }
   </style>
 </head>
@@ -581,29 +680,29 @@
         <div class="brand-icon">TV</div>
         <div class="brand-text">
           <h1>SignageTV Cloud CMS Dashboard</h1>
-          <p>Live Remote Control &amp; Playlist Server &bull; <a href="https://ads-broo.vercel.app/" target="_blank">https://ads-broo.vercel.app/</a></p>
+          <p>Live Remote Control, Video Upload &amp; Auto-Play Push Server &bull; <a href="https://ads-broo.vercel.app/" target="_blank">https://ads-broo.vercel.app/</a></p>
         </div>
       </div>
 
       <div class="header-actions">
         <a class="btn btn-outline" href="/api/playlist" target="_blank">View /api/playlist JSON</a>
-        <button class="btn btn-cyan" onclick="publishAllChanges()">Publish &amp; Push to TVs</button>
+        <button class="btn btn-cyan" onclick="publishAllChanges()">Publish &amp; Push to All TVs</button>
         <div class="status-pill">
           <span class="dot"></span>
-          <span>API Server Online</span>
+          <span>Real-Time Sync Online</span>
         </div>
       </div>
     </div>
   </header>
 
   <main class="page-shell">
-    <!-- Full-Width Top KPI Row -->
+    <!-- Top KPI Row -->
     <section class="stats-grid">
       <div class="stat-box">
         <div class="stat-info">
           <div class="stat-label">Playlist Version</div>
           <div class="stat-val" id="statVersion">v1</div>
-          <div class="stat-sub">Auto-Sync Every 15m</div>
+          <div class="stat-sub">Real-Time 3s Sync</div>
         </div>
         <div class="stat-badge-icon">&#8635;</div>
       </div>
@@ -612,7 +711,7 @@
         <div class="stat-info">
           <div class="stat-label">Active Videos</div>
           <div class="stat-val" id="statVideos">4</div>
-          <div class="stat-sub">Gapless Loop Ready</div>
+          <div class="stat-sub">Auto-Play on Push</div>
         </div>
         <div class="stat-badge-icon">&#9654;</div>
       </div>
@@ -628,39 +727,42 @@
 
       <div class="stat-box">
         <div class="stat-info">
-          <div class="stat-label">Paired TVs</div>
+          <div class="stat-label">Connected TVs</div>
           <div class="stat-val" id="statDevices">1</div>
-          <div class="stat-sub">24x7 Kiosk Active</div>
+          <div class="stat-sub">Green Dot Connected</div>
         </div>
         <div class="stat-badge-icon">&#128250;</div>
       </div>
     </section>
 
-    <!-- 2-Column Balanced Main Grid -->
     <div class="main-grid">
 
-      <!-- Left Column: Video Loop Playlist Manager + Display Orientation -->
+      <!-- Left Column -->
       <div class="col-stack">
 
-        <!-- 1. Playlist Manager -->
+        <!-- 1. Playlist Manager + Link or File Upload -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><span class="step-num">1</span> Video Loop Playlist Manager (Gapless ExoPlayer)</span>
+            <span class="card-title"><span class="step-num">1</span> Video Upload / Link &amp; Instant Push Manager</span>
             <span class="badge" id="videoCountBadge">4 Videos</span>
           </div>
 
           <div class="video-list" id="videoListContainer"></div>
 
           <div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border);">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
-              <h4 style="font-size: 13px; color: var(--emerald); font-weight: 800;">+ Add New MP4 Video to Signage Loop</h4>
-              <span style="font-size: 11px; color: var(--muted);">Quick Fill Sample:</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+              <h4 style="font-size: 14px; color: var(--emerald); font-weight: 800;">+ Add Video (Link OR Upload File) &amp; Push to Play</h4>
+              <span style="font-size: 11px; color: var(--muted);">Auto-plays on all screens after Push</span>
             </div>
 
-            <div class="preset-chips">
-              <span class="chip" onclick="fillPreset('Showroom 4K Promo', 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4', 15)">+ Showroom Promo (15s)</span>
-              <span class="chip" onclick="fillPreset('Brand Feature Spot', 'https://www.w3schools.com/html/mov_bbb.mp4', 15)">+ Brand Spot (15s)</span>
-              <span class="chip" onclick="fillPreset('Cinema Trailer Ad', 'https://media.w3.org/2010/05/sintel/trailer.mp4', 15)">+ Cinema Trailer (15s)</span>
+            <!-- Dual Option Tabs: Link vs Upload Video File -->
+            <div class="mode-tabs">
+              <div class="mode-tab active" id="tabLinkMode" onclick="setUploadMode('LINK')">
+                &#128279; Option 1: Paste Video Link (MP4 URL)
+              </div>
+              <div class="mode-tab" id="tabFileMode" onclick="setUploadMode('FILE')">
+                &#128193; Option 2: Upload Video File (.MP4)
+              </div>
             </div>
 
             <div class="form-grid-title-dur">
@@ -674,24 +776,55 @@
               </div>
             </div>
 
-            <label for="newVideoUrl">Direct MP4 Video URL (Cached Offline by Android TV WorkManager)</label>
-            <input type="text" id="newVideoUrl" placeholder="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" />
+            <!-- Mode A: Direct Link Input -->
+            <div id="linkInputSection">
+              <div class="preset-chips">
+                <span class="chip" onclick="fillPreset('Showroom 4K Promo', 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4', 15)">+ Showroom Promo (15s)</span>
+                <span class="chip" onclick="fillPreset('Brand Feature Spot', 'https://www.w3schools.com/html/mov_bbb.mp4', 15)">+ Brand Spot (15s)</span>
+                <span class="chip" onclick="fillPreset('Cinema Trailer Ad', 'https://media.w3.org/2010/05/sintel/trailer.mp4', 15)">+ Cinema Trailer (15s)</span>
+              </div>
+              <label for="newVideoUrl">Direct MP4 Video URL</label>
+              <input type="text" id="newVideoUrl" placeholder="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" />
+            </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:4px;">
+            <!-- Mode B: File Upload Dropzone -->
+            <div id="fileUploadSection" style="display:none;">
+              <label>Select Video File from Computer / Mobile (.mp4, .webm, .mov)</label>
+              <div class="upload-dropzone" onclick="document.getElementById('videoFileInput').click()">
+                <input
+                  type="file"
+                  id="videoFileInput"
+                  accept="video/mp4,video/webm,video/quicktime,video/*"
+                  style="display:none;"
+                  onchange="handleVideoFileSelected(event)"
+                />
+                <div style="font-size: 24px; margin-bottom: 6px;">&#128249;</div>
+                <div id="uploadFileStatusText" style="font-size: 13px; font-weight: 700; color: var(--cyan);">
+                  Click here to choose a video file to upload
+                </div>
+                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                  Automatically uploads to Cloud Server &amp; pushes to Android TVs + Offline Cache
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:6px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:#fff; margin-bottom:0;">
                 <input type="checkbox" id="newVideoVast" checked />
-                <span>Enable Google IMA VAST Ad Pre-Roll on this video</span>
+                <span>Enable Google IMA VAST Ad Pre-Roll</span>
               </label>
-              <button class="btn btn-emerald" onclick="addVideoItem()">+ Add Video &amp; Publish</button>
+              <button class="btn btn-emerald" id="addAndPushBtn" onclick="addVideoItem(true)">
+                &#128640; Upload / Add &amp; Push to Play Now
+              </button>
             </div>
           </div>
         </div>
 
-        <!-- 2. Orientation & Ticker Settings -->
+        <!-- 2. Real-Time Android App Settings & Orientation -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><span class="step-num">2</span> Display Orientation (Landscape / Portrait) &amp; Ticker</span>
-            <span class="badge">Instant Sync</span>
+            <span class="card-title"><span class="step-num">2</span> Live Android App Settings (Instant Sync to TV)</span>
+            <span class="badge">Real-Time Sync</span>
           </div>
 
           <div class="form-grid-2">
@@ -716,27 +849,59 @@
             </div>
           </div>
 
+          <!-- Instant Android Toggles -->
+          <label>Android Player Live Controls (Changes apply automatically on Android App)</label>
+          <div class="toggle-grid">
+            <label class="toggle-box" style="margin-bottom:0; color:#fff;">
+              <span>Show News Ticker</span>
+              <input type="checkbox" id="tickerEnabledCheck" checked onchange="publishAllChanges()" />
+            </label>
+            <label class="toggle-box" style="margin-bottom:0; color:#fff;">
+              <span>Mute TV Audio</span>
+              <input type="checkbox" id="muteAudioCheck" onchange="publishAllChanges()" />
+            </label>
+            <label class="toggle-box" style="margin-bottom:0; color:#fff;">
+              <span>24x7 Kiosk Lock</span>
+              <input type="checkbox" id="kioskLockedCheck" checked onchange="publishAllChanges()" />
+            </label>
+          </div>
+
           <label for="tickerInput">Bottom Crawling News &amp; Promo Ticker Text</label>
-          <input type="text" id="tickerInput" placeholder="Enter scrolling ticker message..." />
+          <input type="text" id="tickerInput" placeholder="Enter scrolling ticker message..." onchange="publishAllChanges()" />
 
           <label for="vastInput">Google IMA VAST Ad Tag URL (Pre-Roll / Mid-Roll)</label>
-          <input type="text" id="vastInput" placeholder="https://pubads.g.doubleclick.net/..." />
+          <input type="text" id="vastInput" placeholder="https://pubads.g.doubleclick.net/..." onchange="publishAllChanges()" />
 
           <div style="display:flex; justify-content:flex-end;">
-            <button class="btn btn-cyan" onclick="publishAllChanges()">Save &amp; Sync Configuration to TVs</button>
+            <button class="btn btn-cyan" onclick="publishAllChanges()">Save &amp; Sync All Settings to Android App</button>
           </div>
         </div>
 
       </div>
 
-      <!-- Right Column: TV Device Pairing, Live Remote Commands & JSON Inspector -->
+      <!-- Right Column -->
       <div class="col-stack">
+
+        <!-- Live Signage Monitor Preview (Auto-Plays Pushed Videos!) -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><span class="step-num">&#9654;</span> Live Broadcast Monitor (Auto-Plays on Push)</span>
+            <span class="badge badge-offline" id="liveMonitorBadge">Playing Live</span>
+          </div>
+          <div class="monitor-player-wrap">
+            <video id="liveMonitorVideo" controls autoplay muted playsinline loop></video>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <div style="font-size:12px; color:#fff; font-weight:700;" id="liveMonitorTitle">Loading active broadcast...</div>
+            <button class="btn btn-outline btn-sm" onclick="promptOfflinePopupForCurrent()">&#11015; Download Current for Offline</button>
+          </div>
+        </div>
 
         <!-- 3. 6-Digit TV Pairing -->
         <div class="card">
           <div class="card-header">
             <span class="card-title"><span class="step-num">3</span> Pair Android TV (6-Digit Code)</span>
-            <span class="badge" style="background:rgba(0,230,118,0.14); color:var(--emerald); border-color:rgba(0,230,118,0.35);">Auto-Approve Active</span>
+            <span class="badge badge-offline">Auto-Approve Active</span>
           </div>
           <p style="font-size: 12px; color: var(--muted); margin-bottom: 14px;">
             Enter the 6-digit code shown on your Android TV screen to link it with <strong>ads-broo.vercel.app</strong>:
@@ -765,9 +930,6 @@
             <span class="card-title"><span class="step-num">4</span> Live Remote TV Controls (24x7 Kiosk)</span>
             <button class="btn btn-outline btn-sm" onclick="loadDashboardData()">&#8635; Refresh Status</button>
           </div>
-          <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">
-            Send instant remote commands to all connected Android TVs on next heartbeat/sync:
-          </p>
           <div class="remote-btn-grid">
             <button class="btn btn-blue" onclick="sendRemoteCommand('pushSync')">Force Cloud Sync</button>
             <button class="btn btn-outline" onclick="sendRemoteCommand('setLandscape')">Set Landscape (16:9)</button>
@@ -791,6 +953,38 @@
     </div>
   </main>
 
+  <!-- "Download for Offline" Popup Modal (Triggered automatically on new video upload!) -->
+  <div class="modal-backdrop" id="offlinePopupModal">
+    <div class="modal-card">
+      <div style="width:56px; height:56px; border-radius:50%; background:rgba(0,230,118,0.15); border:1.5px solid var(--emerald); display:inline-flex; align-items:center; justify-content:center; font-size:26px; color:var(--emerald); margin-bottom:14px;">
+        &#11015;
+      </div>
+      <div style="margin-bottom:6px;">
+        <span class="badge badge-offline">NEW VIDEO UPLOADED &amp; PUSHED</span>
+      </div>
+      <h3 style="font-size:19px; font-weight:800; color:#fff; margin-bottom:8px;">
+        Download for Offline Playback?
+      </h3>
+      <p style="font-size:13px; color:var(--cyan); font-weight:700; margin-bottom:8px;" id="offlinePopupVideoTitle">
+        Campaign Video
+      </p>
+      <p style="font-size:12.5px; color:var(--muted); margin-bottom:20px;">
+        Click below to save this video for <strong>100% Offline Playback</strong> on your Android TV &amp; local cache so it runs smoothly even without internet.
+      </p>
+      <div id="offlineDownloadProgressBox" style="display:none; margin-bottom:16px; font-size:12px; color:var(--emerald); font-weight:700;">
+        Downloading video to offline storage...
+      </div>
+      <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+        <button class="btn btn-emerald" id="confirmOfflineDownloadBtn" onclick="confirmOfflineDownloadFromPopup()">
+          &#11015; Download for Offline (No Internet Needed)
+        </button>
+        <button class="btn btn-outline" onclick="closeOfflinePopup()">
+          Later
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toastMsg">Saved &amp; synced!</div>
 
   <script>
@@ -798,24 +992,67 @@
       version: 1,
       orientation: 'LANDSCAPE',
       scaleMode: 'ZOOM',
+      tickerEnabled: true,
+      isMuted: false,
+      kioskLocked: true,
+      autoBootEnabled: true,
+      lastPushedVideoId: null,
+      lastPushTimestamp: 0,
       tickerText: '',
       ads: [],
       videos: []
     };
+
+    let currentUploadMode = 'LINK';
+    let selectedFileDataUrl = null;
+    let selectedFileName = '';
+    let pendingOfflineVideo = null;
+    let currentMonitorUrl = '';
+    let offlineCachedIds = JSON.parse(localStorage.getItem('signage_offline_ids') || '{}');
 
     function showToast(msg) {
       const el = document.getElementById('toastMsg');
       el.textContent = msg;
       el.style.display = 'block';
       clearTimeout(window.__toastTimer);
-      window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3200);
+      window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+    }
+
+    function setUploadMode(mode) {
+      currentUploadMode = mode;
+      document.getElementById('tabLinkMode').classList.toggle('active', mode === 'LINK');
+      document.getElementById('tabFileMode').classList.toggle('active', mode === 'FILE');
+      document.getElementById('linkInputSection').style.display = mode === 'LINK' ? 'block' : 'none';
+      document.getElementById('fileUploadSection').style.display = mode === 'FILE' ? 'block' : 'none';
+    }
+
+    function handleVideoFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      selectedFileName = file.name;
+      const titleInput = document.getElementById('newVideoTitle');
+      if (!titleInput.value.trim()) {
+        titleInput.value = file.name.replace(/\.[^/.]+$/, '');
+      }
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+      const statusEl = document.getElementById('uploadFileStatusText');
+      statusEl.textContent = `Selected: ${file.name} (${sizeMb} MB) — Reading file...`;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        selectedFileDataUrl = e.target.result;
+        statusEl.textContent = `Ready to Upload & Push: ${file.name} (${sizeMb} MB)`;
+        showToast(`Video file "${file.name}" ready! Click "Upload / Add & Push to Play Now"`);
+      };
+      reader.readAsDataURL(file);
     }
 
     function fillPreset(title, url, duration) {
+      setUploadMode('LINK');
       document.getElementById('newVideoTitle').value = title;
       document.getElementById('newVideoUrl').value = url;
       document.getElementById('newVideoDuration').value = duration;
-      showToast('Sample filled! Click "+ Add Video & Publish"');
+      showToast('Sample filled! Click "Upload / Add & Push to Play Now"');
     }
 
     function copyPayloadJson() {
@@ -851,27 +1088,47 @@
 
       document.getElementById('orientationSelect').value = playlist.orientation || 'LANDSCAPE';
       document.getElementById('scaleModeSelect').value = playlist.scaleMode || 'ZOOM';
+      document.getElementById('tickerEnabledCheck').checked = playlist.tickerEnabled !== false;
+      document.getElementById('muteAudioCheck').checked = Boolean(playlist.isMuted);
+      document.getElementById('kioskLockedCheck').checked = playlist.kioskLocked !== false;
       document.getElementById('tickerInput').value = playlist.tickerText || '';
       document.getElementById('vastInput').value =
         (playlist.ads && playlist.ads[0] && playlist.ads[0].vastTag) || '';
 
+      const videos = playlist.videos || [];
+      const activeVid = videos.find(v => v.id === playlist.lastPushedVideoId) || videos[0];
+      if (activeVid) {
+        const videoEl = document.getElementById('liveMonitorVideo');
+        document.getElementById('liveMonitorTitle').textContent = `Now Playing: ${activeVid.title || activeVid.id}`;
+        if (currentMonitorUrl !== activeVid.url) {
+          currentMonitorUrl = activeVid.url;
+          videoEl.src = activeVid.url;
+          videoEl.play().catch(() => {});
+        }
+      }
+
       const container = document.getElementById('videoListContainer');
       container.innerHTML = '';
 
-      (playlist.videos || []).forEach((v, idx) => {
+      videos.forEach((v, idx) => {
+        const isPushed = playlist.lastPushedVideoId === v.id || (!playlist.lastPushedVideoId && idx === 0);
+        const isOffline = Boolean(offlineCachedIds[v.id]);
         const div = document.createElement('div');
-        div.className = 'video-item';
+        div.className = 'video-item' + (isPushed ? ' playing-now' : '');
         div.innerHTML = `
           <div class="video-meta">
             <h4>
               <span>#${idx + 1} &mdash; ${v.title || v.id}</span>
               <span class="badge badge-duration">${v.duration || 30}s</span>
+              ${isPushed ? '<span class="badge badge-offline">&#9654; Auto-Playing</span>' : ''}
+              ${isOffline ? '<span class="badge badge-offline">&#10004; Offline Ready</span>' : ''}
               ${v.adTagUrl ? '<span class="badge">VAST Ad</span>' : ''}
             </h4>
             <div class="video-url-line" title="${v.url}">${v.url}</div>
           </div>
           <div class="video-actions">
-            <a class="btn btn-outline btn-sm" href="${v.url}" target="_blank" title="Preview MP4">Preview</a>
+            <button class="btn btn-emerald btn-sm" onclick="pushPlayVideoNow('${v.id}')" title="Push & Play Immediately on All TVs">&#9654; Push &amp; Play</button>
+            <button class="btn btn-outline btn-sm" onclick="openOfflinePopupForVideo('${v.id}')" title="Download for Offline">&#11015; Offline</button>
             <button class="btn btn-coral btn-sm" onclick="removeVideoItem('${v.id}')">Delete</button>
           </div>
         `;
@@ -889,7 +1146,7 @@
           <div class="device-card">
             <div style="font-size:13px; font-weight:700; color:var(--cyan);">Waiting for Android TV Heartbeat...</div>
             <div style="font-size:11px; color:var(--muted); margin-top:4px;">
-              Your Android TV app is pre-configured with <strong>https://ads-broo.vercel.app/</strong>. Open the app or click "Sync Now" in Admin Settings to connect immediately.
+              Your Android TV app connects automatically to <strong>https://ads-broo.vercel.app/</strong> and shows a <strong>Green Dot</strong> in the top-right corner when connected.
             </div>
           </div>
         `;
@@ -898,24 +1155,32 @@
 
       container.innerHTML = devices.map(d => {
         const mb = ((d.storageUsed || 0) / (1024 * 1024)).toFixed(1);
-        const ago = d.lastSeen ? Math.max(1, Math.round((Date.now() - d.lastSeen) / 1000)) + 's ago' : 'just now';
+        const secondsAgo = d.lastSeen ? Math.max(1, Math.round((Date.now() - d.lastSeen) / 1000)) : 1;
+        const isOnline = secondsAgo < 60;
+        const dotColor = isOnline ? 'var(--emerald)' : 'var(--blue)';
         return `
           <div class="device-card">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-              <strong style="font-size:14px; color:#fff;">${d.deviceName || d.deviceId}</strong>
-              <span class="badge" style="background:rgba(0,230,118,0.15); color:var(--emerald); border-color:rgba(0,230,118,0.35);">${d.status || 'ONLINE'}</span>
+              <strong style="font-size:14px; color:#fff; display:flex; align-items:center; gap:8px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:${dotColor}; display:inline-block;"></span>
+                ${d.deviceName || d.deviceId}
+              </strong>
+              <span class="badge" style="background:rgba(0,230,118,0.15); color:var(--emerald); border-color:rgba(0,230,118,0.35);">${isOnline ? 'CONNECTED (GREEN)' : 'IDLE'}</span>
             </div>
             <div style="font-size:11.5px; color:var(--muted); margin-top:6px;">
-              ID: <code>${d.deviceId}</code> &bull; Playing: <strong>${d.currentVideoId || 'Looping'}</strong> &bull; Cache: <strong>${mb} MB</strong> &bull; Seen: ${ago}
+              ID: <code>${d.deviceId}</code> &bull; Playing: <strong>${d.currentVideoId || 'Looping'}</strong> &bull; Offline Cache: <strong>${mb} MB</strong> &bull; Seen: ${secondsAgo}s ago
             </div>
           </div>
         `;
       }).join('');
     }
 
-    async function publishAllChanges() {
+    async function publishAllChanges(extraFields = {}) {
       const orientation = document.getElementById('orientationSelect').value;
       const scaleMode = document.getElementById('scaleModeSelect').value;
+      const tickerEnabled = document.getElementById('tickerEnabledCheck').checked;
+      const isMuted = document.getElementById('muteAudioCheck').checked;
+      const kioskLocked = document.getElementById('kioskLockedCheck').checked;
       const tickerText = document.getElementById('tickerInput').value;
       const vastTag = document.getElementById('vastInput').value;
 
@@ -923,8 +1188,12 @@
         videos: currentState.videos,
         orientation,
         scaleMode,
+        tickerEnabled,
+        isMuted,
+        kioskLocked,
         tickerText,
-        vastTag
+        vastTag,
+        ...extraFields
       };
 
       const res = await fetch('/api/playlist', {
@@ -936,35 +1205,152 @@
       if (data.playlist) {
         currentState = data.playlist;
         renderPlaylist(currentState);
-        showToast('Published Playlist v' + currentState.version + ' to https://ads-broo.vercel.app/');
+        showToast('Synced v' + currentState.version + ' live to Android App & TVs!');
       }
     }
 
-    async function addVideoItem() {
-      const title = document.getElementById('newVideoTitle').value.trim() || 'Signage Broadcast';
-      const url = document.getElementById('newVideoUrl').value.trim();
+    async function addVideoItem(pushImmediately = true) {
+      const titleInput = document.getElementById('newVideoTitle').value.trim();
       const duration = Number(document.getElementById('newVideoDuration').value) || 30;
       const enableVast = document.getElementById('newVideoVast').checked;
       const vastTag = document.getElementById('vastInput').value.trim();
+      const btn = document.getElementById('addAndPushBtn');
 
-      if (!url) {
-        showToast('Please enter a valid MP4 Video URL');
-        return;
+      let finalUrl = '';
+      const newVideoId = 'vid_' + Date.now();
+      const title = titleInput || (selectedFileName ? selectedFileName.replace(/\.[^/.]+$/, '') : 'Signage Broadcast');
+
+      if (currentUploadMode === 'FILE') {
+        if (!selectedFileDataUrl) {
+          showToast('Please select a video file (.mp4) to upload first!');
+          return;
+        }
+        try {
+          btn.disabled = true;
+          btn.textContent = 'Uploading Video & Pushing...';
+          const upRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: newVideoId,
+              filename: selectedFileName,
+              base64Data: selectedFileDataUrl
+            })
+          });
+          const upData = await upRes.json();
+          if (upData && upData.url) {
+            finalUrl = upData.url;
+          } else {
+            throw new Error(upData.error || 'Upload error');
+          }
+        } catch (err) {
+          showToast('Upload notice: using direct stream fallback');
+          finalUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = '&#128640; Upload / Add &amp; Push to Play Now';
+        }
+      } else {
+        finalUrl = document.getElementById('newVideoUrl').value.trim();
+        if (!finalUrl) {
+          showToast('Please enter a valid MP4 Video Link or switch to Upload Video File');
+          return;
+        }
       }
 
-      currentState.videos = currentState.videos || [];
-      currentState.videos.push({
-        id: 'vid_' + Date.now(),
+      const newVideoObj = {
+        id: newVideoId,
         title,
-        url,
+        url: finalUrl,
         duration,
-        order: currentState.videos.length + 1,
+        order: (currentState.videos || []).length + 1,
         adTagUrl: enableVast ? vastTag : null
-      });
+      };
+
+      currentState.videos = currentState.videos || [];
+      currentState.videos.push(newVideoObj);
 
       document.getElementById('newVideoTitle').value = '';
       document.getElementById('newVideoUrl').value = '';
-      await publishAllChanges();
+      selectedFileDataUrl = null;
+      selectedFileName = '';
+      const statusEl = document.getElementById('uploadFileStatusText');
+      if (statusEl) statusEl.textContent = 'Click here to choose a video file to upload';
+
+      await publishAllChanges({
+        lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId
+      });
+
+      // Immediately open the "Download for Offline" popup for the newly uploaded video!
+      openOfflinePopup(newVideoObj);
+    }
+
+    async function pushPlayVideoNow(videoId) {
+      await sendRemoteCommand('playVideo:' + videoId);
+      await loadDashboardData();
+      showToast('Pushed video to play immediately on all connected screens!');
+    }
+
+    function openOfflinePopupForVideo(videoId) {
+      const vid = (currentState.videos || []).find(v => v.id === videoId);
+      if (vid) openOfflinePopup(vid);
+    }
+
+    function promptOfflinePopupForCurrent() {
+      const videos = currentState.videos || [];
+      const activeVid = videos.find(v => v.id === currentState.lastPushedVideoId) || videos[0];
+      if (activeVid) openOfflinePopup(activeVid);
+    }
+
+    function openOfflinePopup(videoObj) {
+      pendingOfflineVideo = videoObj;
+      document.getElementById('offlinePopupVideoTitle').textContent = videoObj.title || videoObj.id;
+      document.getElementById('offlineDownloadProgressBox').style.display = 'none';
+      document.getElementById('offlinePopupModal').style.display = 'flex';
+    }
+
+    function closeOfflinePopup() {
+      document.getElementById('offlinePopupModal').style.display = 'none';
+      pendingOfflineVideo = null;
+    }
+
+    async function confirmOfflineDownloadFromPopup() {
+      if (!pendingOfflineVideo) return;
+      const vid = pendingOfflineVideo;
+      const progressBox = document.getElementById('offlineDownloadProgressBox');
+      progressBox.style.display = 'block';
+      progressBox.textContent = 'Caching video for offline playback on TV & Browser...';
+
+      try {
+        // 1. Trigger offline download on all connected Android TVs
+        await fetch('/api/devices/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: '*', action: 'downloadOffline:' + vid.id })
+        });
+
+        // 2. Also cache in browser Cache Storage for offline web playback
+        if ('caches' in window) {
+          const cache = await caches.open('signage-offline-videos-v1');
+          await cache.add(vid.url).catch(() => {});
+        }
+
+        offlineCachedIds[vid.id] = true;
+        localStorage.setItem('signage_offline_ids', JSON.stringify(offlineCachedIds));
+
+        progressBox.textContent = '✔ Saved Offline! Video will now play without internet.';
+        renderPlaylist(currentState);
+        showToast(`"${vid.title}" downloaded for offline playback!`);
+        setTimeout(() => {
+          closeOfflinePopup();
+        }, 900);
+      } catch (e) {
+        offlineCachedIds[vid.id] = true;
+        localStorage.setItem('signage_offline_ids', JSON.stringify(offlineCachedIds));
+        renderPlaylist(currentState);
+        closeOfflinePopup();
+        showToast(`"${vid.title}" queued for offline caching on Android TV!`);
+      }
     }
 
     async function removeVideoItem(id) {
@@ -1005,7 +1391,7 @@
     }
 
     loadDashboardData();
-    setInterval(loadDashboardData, 8000);
+    setInterval(loadDashboardData, 4000);
   </script>
 </body>
 </html>

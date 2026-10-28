@@ -28,6 +28,21 @@ module.exports = (req, res) => {
   } else if (action === 'setLandscape') {
     state.playlist.orientation = 'LANDSCAPE';
     state.playlist.version = (Number(state.playlist.version) || 1) + 1;
+  } else if (action.startsWith('playVideo:')) {
+    const vidId = action.substring('playVideo:'.length);
+    state.playlist.lastPushedVideoId = vidId;
+    state.playlist.lastPushTimestamp = Date.now();
+    state.playlist.version = (Number(state.playlist.version) || 1) + 1;
+  } else if (action.startsWith('downloadOffline:')) {
+    const vidId = action.substring('downloadOffline:'.length);
+    state.playlist.offlineDownloadRequestedVideoId = vidId;
+    state.playlist.version = (Number(state.playlist.version) || 1) + 1;
+  } else if (action === 'muteAudio') {
+    state.playlist.isMuted = true;
+    state.playlist.version = (Number(state.playlist.version) || 1) + 1;
+  } else if (action === 'unmuteAudio') {
+    state.playlist.isMuted = false;
+    state.playlist.version = (Number(state.playlist.version) || 1) + 1;
   }
 
   saveState(state);
@@ -36,6 +51,7 @@ module.exports = (req, res) => {
     success: true,
     targetDevice,
     action,
-    message: `Remote command '${action}' queued for ${targetDevice === '*' ? 'all TVs' : targetDevice}`
+    playlist: state.playlist,
+    message: `Remote command '${action}' sent to ${targetDevice === '*' ? 'all connected TVs' : targetDevice}`
   });
 };

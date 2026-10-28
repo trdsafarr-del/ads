@@ -57,6 +57,14 @@ class SignageLocalStore(private val context: Context) {
         prefs.edit().putBoolean(KEY_AUTO_BOOT_ENABLED, enabled).apply()
     }
 
+    fun isPlayerMuted(): Boolean {
+        return prefs.getBoolean(KEY_PLAYER_MUTED, false)
+    }
+
+    fun setPlayerMuted(muted: Boolean) {
+        prefs.edit().putBoolean(KEY_PLAYER_MUTED, muted).apply()
+    }
+
     fun getLastSyncTimestamp(): Long {
         return prefs.getLong(KEY_LAST_SYNC_TIME, 0L)
     }
@@ -121,6 +129,36 @@ class SignageLocalStore(private val context: Context) {
         prefs.edit().putString(KEY_VIDEO_SCALE_MODE, scaleMode).apply()
     }
 
+    fun getLastHandledPushTimestamp(): Long {
+        return prefs.getLong(KEY_LAST_PUSH_TIMESTAMP, 0L)
+    }
+
+    fun setLastHandledPushTimestamp(ts: Long) {
+        prefs.edit().putLong(KEY_LAST_PUSH_TIMESTAMP, ts).apply()
+    }
+
+    fun isVideoOfflineDownloaded(videoId: String): Boolean {
+        val set = prefs.getStringSet(KEY_OFFLINE_DOWNLOADED_IDS, DEFAULT_BUILTIN_OFFLINE_IDS) ?: DEFAULT_BUILTIN_OFFLINE_IDS
+        return set.contains(videoId)
+    }
+
+    fun markVideoOfflineDownloaded(videoId: String) {
+        val current = (prefs.getStringSet(KEY_OFFLINE_DOWNLOADED_IDS, DEFAULT_BUILTIN_OFFLINE_IDS) ?: DEFAULT_BUILTIN_OFFLINE_IDS).toMutableSet()
+        current.add(videoId)
+        prefs.edit().putStringSet(KEY_OFFLINE_DOWNLOADED_IDS, current).apply()
+    }
+
+    fun hasShownOfflinePopupFor(videoId: String): Boolean {
+        val set = prefs.getStringSet(KEY_POPUP_SHOWN_IDS, DEFAULT_BUILTIN_OFFLINE_IDS) ?: DEFAULT_BUILTIN_OFFLINE_IDS
+        return set.contains(videoId)
+    }
+
+    fun markOfflinePopupShown(videoId: String) {
+        val current = (prefs.getStringSet(KEY_POPUP_SHOWN_IDS, DEFAULT_BUILTIN_OFFLINE_IDS) ?: DEFAULT_BUILTIN_OFFLINE_IDS).toMutableSet()
+        current.add(videoId)
+        prefs.edit().putStringSet(KEY_POPUP_SHOWN_IDS, current).apply()
+    }
+
     suspend fun saveCachedPlaylist(playlist: PlaylistResponse) = withContext(Dispatchers.IO) {
         try {
             val file = File(context.filesDir, CACHED_PLAYLIST_FILE)
@@ -150,7 +188,8 @@ class SignageLocalStore(private val context: Context) {
         val sanitizedId = item.id.replace(Regex("[^a-zA-Z0-9_-]"), "_")
         val extension = item.videoUrl.substringAfterLast('.', "mp4")
             .substringBefore('?')
-            .ifEmpty { "mp4" }
+            .takeIf { it.length in 2..4 && it.all { ch -> ch.isLetterOrDigit() } }
+            ?: "mp4"
         return File(videoCacheDir, "$sanitizedId.$extension")
     }
 
@@ -177,6 +216,7 @@ class SignageLocalStore(private val context: Context) {
         private const val KEY_API_SERVER_URL = "api_server_url"
         private const val KEY_KIOSK_LOCKED = "kiosk_locked"
         private const val KEY_AUTO_BOOT_ENABLED = "auto_boot_enabled"
+        private const val KEY_PLAYER_MUTED = "player_muted"
         private const val KEY_LAST_SYNC_TIME = "last_sync_time"
         private const val KEY_LAST_SYNC_STATUS = "last_sync_status"
         private const val KEY_ADMIN_PIN = "admin_pin"
@@ -185,6 +225,11 @@ class SignageLocalStore(private val context: Context) {
         private const val KEY_BURN_IN_PROTECTION = "burn_in_protection"
         private const val KEY_DISPLAY_ORIENTATION = "display_orientation"
         private const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
+        private const val KEY_LAST_PUSH_TIMESTAMP = "last_push_timestamp"
+        private const val KEY_OFFLINE_DOWNLOADED_IDS = "offline_downloaded_video_ids"
+        private const val KEY_POPUP_SHOWN_IDS = "offline_popup_shown_video_ids"
+
+        private val DEFAULT_BUILTIN_OFFLINE_IDS = setOf("vid_bunny", "vid_dream", "vid_blazes", "vid_bullrun")
 
         const val DEFAULT_API_URL = "https://ads-broo.vercel.app/"
         const val DEFAULT_ADMIN_PIN = "1234"

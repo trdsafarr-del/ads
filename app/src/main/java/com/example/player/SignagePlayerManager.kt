@@ -5,13 +5,11 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.OptIn
-import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.ima.ImaAdsLoader
@@ -55,6 +53,7 @@ class SignagePlayerManager(private val context: Context) {
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
 
     private var currentPlaylistItems: List<PlaylistItem> = emptyList()
+    private var lastLoadedSignature: String = ""
 
     var onMediaItemChangedListener: ((currentIndex: Int, currentItem: PlaylistItem) -> Unit)? = null
 
@@ -62,7 +61,6 @@ class SignagePlayerManager(private val context: Context) {
         this.playerView = view
         this.hostActivity = activity
 
-        // 1. Initialize Google IMA AdsLoader for VAST pre-roll/mid-roll tags
         imaAdsLoader = ImaAdsLoader.Builder(context)
             .setAdErrorListener { adErrorEvent ->
                 Log.d(TAG, "IMA Ad Notice: ${adErrorEvent.error?.message}")
@@ -77,8 +75,6 @@ class SignagePlayerManager(private val context: Context) {
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
             .setLocalAdInsertionComponents({ imaAdsLoader }, view)
 
-        // 2. Configure aggressive buffer preload (zero black screen transitions)
-        // Next video starts buffering 30s ahead while current is playing
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ 15_000,
@@ -89,7 +85,6 @@ class SignagePlayerManager(private val context: Context) {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        // 3. Build ExoPlayer
         val player = ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
@@ -104,8 +99,6 @@ class SignagePlayerManager(private val context: Context) {
                         _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
                         _isPlaying.value = (playbackState == Player.STATE_READY && playWhenReady)
                         _isAdPlaying.value = isPlayingAd
-
-                        // Send health heartbeat ping to Watchdog service
                         WatchdogService.ping(context)
                     }
 
@@ -129,7 +122,6 @@ class SignagePlayerManager(private val context: Context) {
                     }
 
                     override fun onVideoSizeChanged(videoSize: VideoSize) {
-                        // Judder elimination: query video format and match TV refresh rate
                         val format = exoPlayer?.videoFormat
                         if (format != null && format.frameRate > 0f) {
                             hostActivity?.let { act ->
@@ -140,7 +132,6 @@ class SignagePlayerManager(private val context: Context) {
 
                     override fun onPlayerError(error: PlaybackException) {
                         Log.w(TAG, "Recovering from playback notice (${error.errorCodeName}): ${error.message}")
-                        // Switch to guaranteed local fallback MP4 so the player never enters an error loop
                         val fallbackFile = SignageSampleVideoGenerator.getOrCreateFallbackVideo(context)
                         if (SignageSampleVideoGenerator.isValidMp4File(fallbackFile)) {
                             val fallbackItem = MediaItem.fromUri(Uri.fromFile(fallbackFile))
@@ -162,21 +153,37 @@ class SignagePlayerManager(private val context: Context) {
         imaAdsLoader?.setPlayer(player)
 
         if (currentPlaylistItems.isNotEmpty()) {
-            loadPlaylist(currentPlaylistItems)
+            loadPlaylist(currentPlaylistItems, forceReload = true)
         }
     }
 
     /**
      * Loads playlist into ExoPlayer using ConcatenatingMediaSource with Google IMA VAST ads
-     * and REPEAT_MODE_ALL for gapless looping playback.
+     * and REPEAT_MODE_ALL for gapless looping playback. Supports jumping directly to a pushed video.
      */
-    fun loadPlaylist(items: List<PlaylistItem>) {
-        this.currentPlaylistItems = items
-        val player = exoPlayer ?: return
-        val view = playerView ?: return
-        val adsLoader = imaAdsLoader ?: return
-
+    fun loadPlaylist(
+        items: List<PlaylistItem>,
+        startVideoId: String? = null,
+        forceReload: Boolean = false
+    ) {
         if (items.isEmpty()) return
+        val signature = items.joinToString("|") { "${it.id}:${it.videoUrl}:${it.localFilePath ?: ""}" }
+        val player = exoPlayer
+        val view = playerView
+        val adsLoader = imaAdsLoader
+
+        this.currentPlaylistItems = items
+
+        if (player == null || view == null || adsLoader == null) return
+
+        // If only startVideoId changed and playlist items are identical, just jump to that video
+        if (!forceReload && signature == lastLoadedSignature && player.mediaItemCount == items.size) {
+            if (!startVideoId.isNullOrBlank()) {
+                playVideoById(startVideoId)
+            }
+            return
+        }
+        lastLoadedSignature = signature
 
         val mediaSourceFactory = DefaultMediaSourceFactory(ResilientSignageDataSource.Factory(context))
             .setLocalAdInsertionComponents({ adsLoader }, view)
@@ -201,22 +208,46 @@ class SignagePlayerManager(private val context: Context) {
             concatenatingMediaSource.addMediaSource(mediaSource)
         }
 
+        val targetIndex = if (!startVideoId.isNullOrBlank()) {
+            items.indexOfFirst { it.id == startVideoId }.takeIf { it >= 0 } ?: 0
+        } else {
+            0
+        }
+
         player.setMediaSource(concatenatingMediaSource)
+        if (targetIndex > 0) {
+            player.seekTo(targetIndex, 0L)
+        }
         player.repeatMode = Player.REPEAT_MODE_ALL
         player.prepare()
         player.playWhenReady = true
+        player.play()
 
-        _currentMediaIndex.value = 0
-        val first = items.firstOrNull()
-        _currentTitle.value = first?.title ?: ""
-        _currentMediaId.value = first?.id ?: ""
-        Log.i(TAG, "Loaded ${items.size} videos into gapless ConcatenatingMediaSource loop")
+        _currentMediaIndex.value = targetIndex
+        val active = items.getOrNull(targetIndex) ?: items.firstOrNull()
+        _currentTitle.value = active?.title ?: ""
+        _currentMediaId.value = active?.id ?: ""
+        Log.i(TAG, "Loaded ${items.size} videos into gapless loop (starting at index=$targetIndex, id=${active?.id})")
     }
 
     /**
-     * Prioritizes local cached file on disk; falls back seamlessly to local synthesized MP4
-     * for restricted URLs or resilient streaming URL.
+     * Immediately seeks to and plays a specific video by ID (used when a video is pushed from CMS or Admin).
      */
+    fun playVideoById(videoId: String) {
+        val player = exoPlayer ?: return
+        val targetIndex = currentPlaylistItems.indexOfFirst { it.id == videoId }
+        if (targetIndex >= 0 && targetIndex < player.mediaItemCount) {
+            player.seekTo(targetIndex, 0L)
+            player.playWhenReady = true
+            player.play()
+            _currentMediaIndex.value = targetIndex
+            val item = currentPlaylistItems[targetIndex]
+            _currentTitle.value = item.title
+            _currentMediaId.value = item.id
+            Log.i(TAG, "Auto-playing pushed video immediately: ${item.title} (index=$targetIndex)")
+        }
+    }
+
     private fun resolveUri(item: PlaylistItem): Uri {
         if (!item.localFilePath.isNullOrBlank()) {
             val file = File(item.localFilePath)
@@ -228,11 +259,9 @@ class SignagePlayerManager(private val context: Context) {
         if (ResilientSignageDataSource.isKnownRestrictedUrl(item.videoUrl)) {
             val fallbackFile = SignageSampleVideoGenerator.getOrCreateFallbackVideo(context, item.id)
             if (SignageSampleVideoGenerator.isValidMp4File(fallbackFile)) {
-                Log.d(TAG, "Playing restricted stream from local fallback MP4: ${fallbackFile.absolutePath}")
                 return Uri.fromFile(fallbackFile)
             }
         }
-        Log.d(TAG, "Playing from remote stream: ${item.videoUrl}")
         return Uri.parse(item.videoUrl)
     }
 
@@ -257,16 +286,18 @@ class SignagePlayerManager(private val context: Context) {
         exoPlayer?.seekToPreviousMediaItem()
     }
 
-    fun toggleMute() {
-        val player = exoPlayer ?: return
-        val newMute = !_isMuted.value
-        _isMuted.value = newMute
-        player.volume = if (newMute) 0f else 1f
+    fun setMuted(muted: Boolean) {
+        _isMuted.value = muted
+        exoPlayer?.volume = if (muted) 0f else 1f
     }
 
-    // Lifecycle events
+    fun toggleMute(): Boolean {
+        val newMute = !_isMuted.value
+        setMuted(newMute)
+        return newMute
+    }
+
     fun onPause() {
-        // In signage TV kiosk, continue playing or pause if screen turns off
         Log.d(TAG, "Lifecycle onPause")
     }
 
@@ -280,7 +311,6 @@ class SignagePlayerManager(private val context: Context) {
     }
 
     fun release() {
-        Log.d(TAG, "Releasing SignagePlayerManager")
         try {
             imaAdsLoader?.setPlayer(null)
             imaAdsLoader?.release()

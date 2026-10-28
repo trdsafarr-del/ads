@@ -15,6 +15,7 @@ module.exports = (req, res) => {
         ...(state.devices[deviceId] || {}),
         deviceId,
         lastPlaylistFetch: Date.now(),
+        lastSeen: Date.now(),
         status: (state.devices[deviceId] && state.devices[deviceId].status) || 'ONLINE'
       };
       saveState(state);
@@ -26,7 +27,23 @@ module.exports = (req, res) => {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const current = state.playlist;
 
-    if (Array.isArray(body.videos)) {
+    // Support adding/pushing a single video directly from Android or Web
+    if (body.action === 'addSingleVideo' && body.video) {
+      const v = body.video;
+      const newId = v.id || `vid_${Date.now()}`;
+      const newVideo = {
+        id: newId,
+        title: v.title || `Campaign Video #${(current.videos || []).length + 1}`,
+        url: v.url,
+        order: (current.videos || []).length + 1,
+        duration: Number(v.duration) || 30,
+        checksum: v.checksum || null,
+        adTagUrl: v.enableVast === false ? null : (v.adTagUrl || null)
+      };
+      current.videos = [...(current.videos || []), newVideo];
+      current.lastPushedVideoId = newId;
+      current.lastPushTimestamp = Date.now();
+    } else if (Array.isArray(body.videos)) {
       current.videos = body.videos.map((v, idx) => ({
         id: v.id || `vid_${Date.now()}_${idx + 1}`,
         title: v.title || `Campaign Video #${idx + 1}`,
@@ -48,6 +65,31 @@ module.exports = (req, res) => {
 
     if (typeof body.scaleMode === 'string') {
       current.scaleMode = body.scaleMode;
+    }
+
+    if (typeof body.tickerEnabled === 'boolean') {
+      current.tickerEnabled = body.tickerEnabled;
+    }
+
+    if (typeof body.isMuted === 'boolean') {
+      current.isMuted = body.isMuted;
+    }
+
+    if (typeof body.kioskLocked === 'boolean') {
+      current.kioskLocked = body.kioskLocked;
+    }
+
+    if (typeof body.autoBootEnabled === 'boolean') {
+      current.autoBootEnabled = body.autoBootEnabled;
+    }
+
+    if (typeof body.lastPushedVideoId === 'string' && body.lastPushedVideoId.trim() !== '') {
+      current.lastPushedVideoId = body.lastPushedVideoId.trim();
+      current.lastPushTimestamp = Date.now();
+    }
+
+    if (typeof body.offlineDownloadRequestedVideoId === 'string') {
+      current.offlineDownloadRequestedVideoId = body.offlineDownloadRequestedVideoId.trim() || null;
     }
 
     if (typeof body.vastTag === 'string') {

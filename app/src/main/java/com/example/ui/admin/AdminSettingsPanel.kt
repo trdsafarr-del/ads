@@ -3,6 +3,7 @@ package com.example.ui.admin
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,16 +30,19 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.StayCurrentLandscape
 import androidx.compose.material.icons.filled.StayCurrentPortrait
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -77,6 +81,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.local.SignageLocalStore
+import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
 import com.example.kiosk.KioskPermissionHelper
 import com.example.ui.orientation.SignageOrientation
@@ -116,6 +121,9 @@ fun AdminSettingsPanel(
     cacheSizeBytes: Long,
     onClearCache: () -> Unit,
     onAddVideoToPlaylist: (title: String, url: String, durationSec: Int, enableVast: Boolean) -> Unit = { _, _, _, _ -> },
+    onUploadLocalVideoUri: (uri: Uri, title: String, durationSec: Int, enableVast: Boolean) -> Unit = { _, _, _, _ -> },
+    onPushPlayVideoNow: (videoId: String) -> Unit = {},
+    onDownloadVideoOffline: (item: PlaylistItem) -> Unit = {},
     onRemoveVideoFromPlaylist: (videoId: String) -> Unit = {},
     onUpdateTickerText: (String) -> Unit = {},
     onExitKioskApp: () -> Unit,
@@ -134,6 +142,18 @@ fun AdminSettingsPanel(
     var newVideoEnableVast by remember { mutableStateOf(true) }
     var editingTicker by remember(playlist.tickerText) {
         mutableStateOf(playlist.tickerText ?: "★ LIVE DIGITAL SIGNAGE ★")
+    }
+
+    // Zero-permission Android Photo Picker for uploading local video files
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { pickedUri: Uri? ->
+        if (pickedUri != null) {
+            val titleToUse = newVideoTitle.ifBlank { "Uploaded Signage Video" }
+            onUploadLocalVideoUri(pickedUri, titleToUse, 30, newVideoEnableVast)
+            newVideoTitle = ""
+            newVideoUrl = ""
+        }
     }
 
     // Refresh counter triggered whenever user returns from Android Settings
@@ -172,8 +192,6 @@ fun AdminSettingsPanel(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
         permissionRefreshTrigger++
-        // If still not default launcher after RoleManager result (e.g., OEM TV ignored RoleManager),
-        // force the Home Chooser dialog or open Default Home Settings directly.
         if (!KioskPermissionHelper.isDefaultHomeLauncher(context)) {
             KioskPermissionHelper.forceShowDefaultLauncherPickerOrSettings(context)
         }
@@ -810,11 +828,11 @@ fun AdminSettingsPanel(
                     }
                 }
 
-                // SECTION 4: QUICK PLAYLIST & TICKER MANAGER
+                // SECTION 4: QUICK PLAYLIST & TICKER MANAGER (LINK OR UPLOAD VIDEO + PUSH AUTO-PLAY)
                 item {
-                    AdminSectionCard(title = "Playlist & Live Ticker Manager (${playlist.items.size} Videos)") {
+                    AdminSectionCard(title = "Video Upload / Link & Push Manager (${playlist.items.size} Videos)") {
                         Text(
-                            text = "Add MP4 Video to Loop:",
+                            text = "Add Video via Direct Link OR Upload Video File from Device (Auto-Plays on Push):",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -838,7 +856,7 @@ fun AdminSettingsPanel(
                         OutlinedTextField(
                             value = newVideoUrl,
                             onValueChange = { newVideoUrl = it },
-                            placeholder = { Text("Direct MP4 URL (https://.../video.mp4)", fontSize = 11.sp, color = TextMuted) },
+                            placeholder = { Text("Option 1: Paste MP4 Video Link (https://.../video.mp4)", fontSize = 11.sp, color = TextMuted) },
                             modifier = Modifier.fillMaxWidth(),
                             textStyle = TextStyle(fontSize = 12.sp, color = Color.White),
                             singleLine = true,
@@ -849,19 +867,40 @@ fun AdminSettingsPanel(
                                 unfocusedIndicatorColor = SignageSurfaceVariant
                             )
                         )
+                        Spacer(modifier = Modifier.height(6.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(
-                                    checked = newVideoEnableVast,
-                                    onCheckedChange = { newVideoEnableVast = it },
-                                    colors = CheckboxDefaults.colors(checkedColor = NeonCyan, checkmarkColor = Color.Black)
-                                )
-                                Text("Enable VAST Ad Pre-roll", color = TextSecondary, fontSize = 11.sp)
+                            Checkbox(
+                                checked = newVideoEnableVast,
+                                onCheckedChange = { newVideoEnableVast = it },
+                                colors = CheckboxDefaults.colors(checkedColor = NeonCyan, checkmarkColor = Color.Black)
+                            )
+                            Text("Enable VAST Ad Pre-roll", color = TextSecondary, fontSize = 11.sp)
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    videoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                    )
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("upload_local_video_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.UploadFile, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Upload Video File", fontSize = 11.sp, color = NeonCyan, fontWeight = FontWeight.Bold)
                             }
+
                             Button(
                                 onClick = {
                                     if (newVideoUrl.isNotBlank()) {
@@ -871,15 +910,18 @@ fun AdminSettingsPanel(
                                     }
                                 },
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen)
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("add_and_push_video_button")
                             ) {
-                                Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                                Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Add Video", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                                Text("Push & Play Link", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Current playlist items list
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -913,23 +955,48 @@ fun AdminSettingsPanel(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = if (item.localFilePath != null) "Cached Offline • ${item.durationSeconds}s" else "Streaming • ${item.durationSeconds}s",
-                                                color = if (item.localFilePath != null) EmeraldGreen else TextMuted,
+                                                text = if (item.isOfflineDownloaded || item.localFilePath != null) "✔ Offline Ready • ${item.durationSeconds}s" else "Cloud Stream • ${item.durationSeconds}s",
+                                                color = if (item.isOfflineDownloaded || item.localFilePath != null) EmeraldGreen else TextMuted,
                                                 fontSize = 10.sp
                                             )
                                         }
                                     }
-                                    if (playlist.items.size > 1) {
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
                                         IconButton(
-                                            onClick = { onRemoveVideoFromPlaylist(item.id) },
-                                            modifier = Modifier.size(28.dp)
+                                            onClick = { onPushPlayVideoNow(item.id) },
+                                            modifier = Modifier.size(30.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = "Remove Video",
-                                                tint = CoralRed,
-                                                modifier = Modifier.size(15.dp)
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Push & Play Now",
+                                                tint = EmeraldGreen,
+                                                modifier = Modifier.size(16.dp)
                                             )
+                                        }
+                                        IconButton(
+                                            onClick = { onDownloadVideoOffline(item) },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudDownload,
+                                                contentDescription = "Download for Offline",
+                                                tint = NeonCyan,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        if (playlist.items.size > 1) {
+                                            IconButton(
+                                                onClick = { onRemoveVideoFromPlaylist(item.id) },
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Remove Video",
+                                                    tint = CoralRed,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }

@@ -1,13 +1,18 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Build
+import android.util.Base64
 import android.util.Log
-import com.example.BuildConfig
-import com.example.data.api.ApkUpdateResponse
 import com.example.data.api.HeartbeatRequest
 import com.example.data.api.PairRequest
+import com.example.data.api.PushPlaylistSettingsRequest
+import com.example.data.api.PushSingleVideoRequest
 import com.example.data.api.SignageApiService
+import com.example.data.api.UploadVideoRequest
 import com.example.data.local.SignageLocalStore
 import com.example.data.local.db.CachedPlaylistEntity
 import com.example.data.local.db.CachedVideoEntity
@@ -16,6 +21,7 @@ import com.example.data.local.db.SignageDatabase
 import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
 import com.example.data.model.PlaylistSchema
+import com.example.data.model.VideoItem
 import com.example.pairing.PairingManager
 import com.example.player.ResilientSignageDataSource
 import com.example.player.SignageSampleVideoGenerator
@@ -41,6 +47,25 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.math.pow
+
+/**
+ * Real-time connection state displayed in the Top-Right corner of the Android TV player:
+ * - CONNECTED_GREEN: Connected to Web CMS Dashboard in real time (Green Dot)
+ * - OFFLINE_RED: No internet connection on device; working 100% offline from cache (Red Dot)
+ * - DISCONNECTED_BLUE: Device has internet connection, but is disconnected from Web Dashboard (Blue Dot)
+ */
+enum class DashboardConnectionStatus {
+    CONNECTED_GREEN,
+    OFFLINE_RED,
+    DISCONNECTED_BLUE
+}
+
+data class RealtimeSyncResult(
+    val connectionStatus: DashboardConnectionStatus,
+    val playlist: PlaylistResponse?,
+    val newlyUploadedVideoForPopup: PlaylistItem? = null,
+    val pushedVideoIdToAutoPlay: String? = null
+)
 
 sealed class SyncState {
     data object Idle : SyncState()
@@ -75,10 +100,10 @@ class SignageRepository(private val context: Context) {
             loadFromRoomOrCache()
         }
         if (cached != null && cached.items.isNotEmpty()) {
-            _playlistFlow.value = resolveLocalFilePaths(cached)
+            _playlistFlow.value = resolveLocalFilePaths(cached, autoSynthesizeMissing = true)
         } else {
             val def = createDefaultPlaylist()
-            _playlistFlow.value = resolveLocalFilePaths(def)
+            _playlistFlow.value = resolveLocalFilePaths(def, autoSynthesizeMissing = true)
         }
     }
 
@@ -97,7 +122,29 @@ class SignageRepository(private val context: Context) {
         }
     }
 
-    private fun resolveLocalFilePaths(playlist: PlaylistResponse): PlaylistResponse {
+    /**
+     * Checks whether the Android device currently has active internet connectivity.
+     */
+    fun hasInternetConnection(): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return false
+            val activeNetwork = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun resolveLocalFilePaths(
+        playlist: PlaylistResponse,
+        autoSynthesizeMissing: Boolean = false
+    ): PlaylistResponse {
         val updatedItems = playlist.items.mapIndexed { index, item ->
             val cleanUrl = sanitizeVideoUrl(item.videoUrl, index + 1)
             val sanitizedItem = item.copy(videoUrl = cleanUrl)
@@ -105,23 +152,32 @@ class SignageRepository(private val context: Context) {
             val validExisting = existingPath?.takeIf {
                 SignageSampleVideoGenerator.isValidMp4File(File(it))
             }
-            val finalPath = validExisting ?: SignageSampleVideoGenerator.getOrCreateVideoForItem(
-                context = context,
-                item = sanitizedItem,
-                targetFile = localStore.getLocalVideoFile(sanitizedItem)
-            )?.absolutePath
-            sanitizedItem.copy(localFilePath = finalPath)
+            val isExplicitOffline = localStore.isVideoOfflineDownloaded(sanitizedItem.id)
+            val finalPath = validExisting ?: if (autoSynthesizeMissing || isExplicitOffline) {
+                SignageSampleVideoGenerator.getOrCreateVideoForItem(
+                    context = context,
+                    item = sanitizedItem,
+                    targetFile = localStore.getLocalVideoFile(sanitizedItem)
+                )?.absolutePath
+            } else {
+                null
+            }
+            sanitizedItem.copy(
+                localFilePath = finalPath,
+                isOfflineDownloaded = isExplicitOffline && finalPath != null
+            )
         }
         return playlist.copy(items = updatedItems)
     }
 
-    private fun createRetrofit(baseUrl: String): SignageApiService {
+    private fun createRetrofit(baseUrl: String, fastPoll: Boolean = false): SignageApiService {
         val logging = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BASIC
         }
+        val timeoutSec = if (fastPoll) 6L else 30L
         val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(timeoutSec, TimeUnit.SECONDS)
+            .readTimeout(if (fastPoll) 8L else 60L, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .addInterceptor { chain ->
@@ -143,8 +199,195 @@ class SignageRepository(private val context: Context) {
     }
 
     /**
-     * Executes Cloud Sync with exponential backoff, checksum verification, Room persistence,
-     * and smart cache management.
+     * Real-time 3-second polling of the Web CMS Dashboard:
+     * 1. Determines Green / Red / Blue connection status dot.
+     * 2. Syncs any setting changes made on the Web Dashboard immediately to the Android app.
+     * 3. Detects newly uploaded/added videos to show the "Download for Offline" popup.
+     * 4. Detects newly pushed videos (`lastPushedVideoId`) to auto-play immediately.
+     */
+    suspend fun pollRealtimeDashboardSync(currentVideoId: String?): RealtimeSyncResult = withContext(Dispatchers.IO) {
+        if (!hasInternetConnection()) {
+            return@withContext RealtimeSyncResult(
+                connectionStatus = DashboardConnectionStatus.OFFLINE_RED,
+                playlist = null
+            )
+        }
+
+        val baseUrl = localStore.getApiServerUrl()
+        val deviceId = pairingManager.getDeviceId()
+
+        try {
+            val api = createRetrofit(baseUrl, fastPoll = true)
+
+            // 1. Send heartbeat & check queued remote actions
+            val hbResponse = try {
+                api.sendHeartbeat(
+                    HeartbeatRequest(
+                        deviceId = deviceId,
+                        status = "PLAYING",
+                        currentVideoId = currentVideoId,
+                        storageUsed = localStore.getCachedStorageSizeBytes(),
+                        appVersion = "1.0",
+                        lastSyncTime = localStore.getLastSyncTimestamp()
+                    )
+                )
+            } catch (e: Exception) {
+                null
+            }
+
+            // 2. Fetch live playlist & settings snapshot
+            val playlistRes = api.fetchPlaylist(deviceId)
+            if (!playlistRes.isSuccessful || playlistRes.body() == null) {
+                return@withContext RealtimeSyncResult(
+                    connectionStatus = DashboardConnectionStatus.DISCONNECTED_BLUE,
+                    playlist = null
+                )
+            }
+
+            val schema = playlistRes.body()!!
+            val mapped = mapSchemaToPlaylist(schema)
+            val resolved = resolveLocalFilePaths(mapped, autoSynthesizeMissing = false)
+
+            // Handle queued server action from heartbeat if any
+            val serverAction = hbResponse?.body()?.serverAction
+            var actionPlayVideoId: String? = null
+            if (!serverAction.isNullOrBlank()) {
+                when {
+                    serverAction == "clearCache" -> localStore.cleanupUnusedVideos(emptyList())
+                    serverAction == "setPortrait" -> localStore.setDisplayOrientation("PORTRAIT")
+                    serverAction == "setLandscape" -> localStore.setDisplayOrientation("LANDSCAPE")
+                    serverAction == "muteAudio" -> localStore.setPlayerMuted(true)
+                    serverAction == "unmuteAudio" -> localStore.setPlayerMuted(false)
+                    serverAction.startsWith("playVideo:") -> {
+                        actionPlayVideoId = serverAction.removePrefix("playVideo:").trim()
+                    }
+                    serverAction.startsWith("downloadOffline:") -> {
+                        val targetId = serverAction.removePrefix("downloadOffline:").trim()
+                        resolved.items.find { it.id == targetId }?.let { item ->
+                            downloadVideoForOffline(item)
+                        }
+                    }
+                }
+            }
+
+            // Also check if dashboard requested offline download via playlist schema
+            if (!resolved.offlineDownloadRequestedVideoId.isNullOrBlank()) {
+                val reqId = resolved.offlineDownloadRequestedVideoId
+                resolved.items.find { it.id == reqId && !it.isOfflineDownloaded }?.let { item ->
+                    downloadVideoForOffline(item)
+                }
+            }
+
+            // Detect if a brand-new video was uploaded/added that hasn't shown the "Download for Offline" popup yet
+            val newlyUploadedVideo = resolved.items.firstOrNull { item ->
+                !localStore.hasShownOfflinePopupFor(item.id) && !localStore.isVideoOfflineDownloaded(item.id)
+            }
+
+            // Detect if a video was newly pushed for immediate auto-play
+            val lastHandledPushTs = localStore.getLastHandledPushTimestamp()
+            var pushedVideoToPlay: String? = actionPlayVideoId
+            if (resolved.lastPushTimestamp > lastHandledPushTs && !resolved.lastPushedVideoId.isNullOrBlank()) {
+                localStore.setLastHandledPushTimestamp(resolved.lastPushTimestamp)
+                pushedVideoToPlay = resolved.lastPushedVideoId
+            }
+
+            // Update Room & in-memory flow if anything changed
+            val current = _playlistFlow.value
+            val hasChanges = current.version != resolved.version ||
+                current.items.map { it.id to it.isOfflineDownloaded } != resolved.items.map { it.id to it.isOfflineDownloaded } ||
+                current.orientation != resolved.orientation ||
+                current.scaleMode != resolved.scaleMode ||
+                current.tickerText != resolved.tickerText ||
+                current.tickerEnabled != resolved.tickerEnabled ||
+                current.isMuted != resolved.isMuted ||
+                current.kioskLocked != resolved.kioskLocked
+
+            if (hasChanges) {
+                persistUpdatedPlaylist(resolved, autoSynthesizeMissing = false)
+                val now = System.currentTimeMillis()
+                localStore.setLastSyncTimestamp(now)
+                localStore.setLastSyncStatus("Live Connected (v${resolved.version})")
+            }
+
+            return@withContext RealtimeSyncResult(
+                connectionStatus = DashboardConnectionStatus.CONNECTED_GREEN,
+                playlist = _playlistFlow.value,
+                newlyUploadedVideoForPopup = newlyUploadedVideo,
+                pushedVideoIdToAutoPlay = pushedVideoToPlay
+            )
+        } catch (e: Exception) {
+            Log.d(TAG, "Dashboard poll unreachable: ${e.message}")
+            val status = if (hasInternetConnection()) {
+                DashboardConnectionStatus.DISCONNECTED_BLUE
+            } else {
+                DashboardConnectionStatus.OFFLINE_RED
+            }
+            return@withContext RealtimeSyncResult(
+                connectionStatus = status,
+                playlist = null
+            )
+        }
+    }
+
+    /**
+     * Downloads a specific video to persistent local storage for 100% offline playback without internet.
+     */
+    suspend fun downloadVideoForOffline(item: PlaylistItem): Boolean = withContext(Dispatchers.IO) {
+        val localFile = localStore.getLocalVideoFile(item)
+        val api = createRetrofit(localStore.getApiServerUrl())
+
+        var isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(localFile)
+        if (!isReadyOnDisk || localFile.length() < 100_000L) {
+            val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile)
+            isReadyOnDisk = downloaded && SignageSampleVideoGenerator.isValidMp4File(localFile)
+        }
+
+        if (!isReadyOnDisk) {
+            val fallback = SignageSampleVideoGenerator.getOrCreateVideoForItem(
+                context = context,
+                item = item,
+                targetFile = localFile
+            )
+            isReadyOnDisk = SignageSampleVideoGenerator.isValidMp4File(fallback)
+        }
+
+        if (isReadyOnDisk) {
+            localStore.markVideoOfflineDownloaded(item.id)
+            localStore.markOfflinePopupShown(item.id)
+
+            database.videoDao().insertOrUpdate(
+                CachedVideoEntity(
+                    id = item.id,
+                    url = item.videoUrl,
+                    localPath = localFile.absolutePath,
+                    checksum = item.checksum,
+                    duration = item.durationSeconds,
+                    playOrder = item.order,
+                    fileSizeBytes = localFile.length()
+                )
+            )
+
+            // Update active playlist flow with offline file path
+            val current = _playlistFlow.value
+            val updatedItems = current.items.map { existing ->
+                if (existing.id == item.id) {
+                    existing.copy(
+                        localFilePath = localFile.absolutePath,
+                        isOfflineDownloaded = true
+                    )
+                } else {
+                    existing
+                }
+            }
+            val updatedPlaylist = current.copy(items = updatedItems)
+            persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+        }
+        isReadyOnDisk
+    }
+
+    /**
+     * Executes full Cloud Sync with checksum verification, Room persistence,
+     * and offline cache preparation.
      */
     suspend fun syncPlaylist(): Result<PlaylistResponse> = withContext(Dispatchers.IO) {
         val baseUrl = localStore.getApiServerUrl()
@@ -159,7 +402,6 @@ class SignageRepository(private val context: Context) {
             try {
                 val api = createRetrofit(baseUrl)
 
-                // 1. Fetch remote playlist schema
                 val response = try {
                     api.fetchPlaylist(deviceId)
                 } catch (e: Exception) {
@@ -174,7 +416,6 @@ class SignageRepository(private val context: Context) {
                     loadFromRoomOrCache() ?: createDefaultPlaylist()
                 }
 
-                // 2. Download and verify each video asset
                 val totalVideos = remotePlaylist.items.size
                 val updatedItems = mutableListOf<PlaylistItem>()
 
@@ -193,7 +434,6 @@ class SignageRepository(private val context: Context) {
                             if (verifyChecksum(localFile, item.checksum)) {
                                 isReadyOnDisk = true
                             } else {
-                                Log.w(TAG, "Checksum mismatch for ${item.title}! Deleting corrupt file.")
                                 localFile.delete()
                                 isReadyOnDisk = false
                             }
@@ -210,10 +450,12 @@ class SignageRepository(private val context: Context) {
                     }
 
                     val finalPath = if (isReadyOnDisk) localFile.absolutePath else null
-                    val updatedItem = item.copy(localFilePath = finalPath)
+                    val updatedItem = item.copy(
+                        localFilePath = finalPath,
+                        isOfflineDownloaded = localStore.isVideoOfflineDownloaded(item.id)
+                    )
                     updatedItems.add(updatedItem)
 
-                    // Persist to Room VideoDao
                     database.videoDao().insertOrUpdate(
                         CachedVideoEntity(
                             id = item.id,
@@ -229,7 +471,6 @@ class SignageRepository(private val context: Context) {
 
                 val finalPlaylist = remotePlaylist.copy(items = updatedItems)
 
-                // Save to Room and JSON cache
                 val json = moshi.adapter(PlaylistResponse::class.java).toJson(finalPlaylist)
                 database.playlistDao().savePlaylist(
                     CachedPlaylistEntity(
@@ -248,7 +489,6 @@ class SignageRepository(private val context: Context) {
                 _playlistFlow.value = finalPlaylist
                 _syncState.value = SyncState.Success("Synced ${finalPlaylist.items.size} items", now)
 
-                // Check for silent auto-update if idle maintenance window or configured
                 checkSilentUpdate(api)
 
                 return@withContext Result.success(finalPlaylist)
@@ -256,7 +496,6 @@ class SignageRepository(private val context: Context) {
                 lastError = e
                 attempt++
                 val delaySeconds = min(300.0, 2.0.pow(attempt.toDouble())).toLong()
-                Log.w(TAG, "Sync failed on attempt $attempt. Retrying in ${delaySeconds}s: ${e.message}")
                 if (attempt < maxAttempts) {
                     delay(delaySeconds * 1000L)
                 }
@@ -277,6 +516,19 @@ class SignageRepository(private val context: Context) {
         if (!schema.scaleMode.isNullOrBlank()) {
             localStore.setVideoScaleMode(schema.scaleMode)
         }
+        if (schema.tickerEnabled != null) {
+            localStore.setTickerEnabled(schema.tickerEnabled)
+        }
+        if (schema.isMuted != null) {
+            localStore.setPlayerMuted(schema.isMuted)
+        }
+        if (schema.kioskLocked != null) {
+            localStore.setKioskModeLocked(schema.kioskLocked)
+        }
+        if (schema.autoBootEnabled != null) {
+            localStore.setAutoBootEnabled(schema.autoBootEnabled)
+        }
+
         val items = schema.videos.mapIndexed { idx, v ->
             PlaylistItem(
                 id = v.id,
@@ -285,7 +537,8 @@ class SignageRepository(private val context: Context) {
                 checksum = v.checksum,
                 durationSeconds = v.duration,
                 adTagUrl = v.adTagUrl ?: defaultAdTag,
-                order = v.order
+                order = v.order,
+                isOfflineDownloaded = localStore.isVideoOfflineDownloaded(v.id)
             )
         }
         return PlaylistResponse(
@@ -295,17 +548,23 @@ class SignageRepository(private val context: Context) {
             syncIntervalMinutes = 15,
             defaultAdTagUrl = defaultAdTag,
             tickerText = schema.tickerText,
+            orientation = schema.orientation ?: localStore.getDisplayOrientation(),
+            scaleMode = schema.scaleMode ?: localStore.getVideoScaleMode(),
+            tickerEnabled = schema.tickerEnabled ?: localStore.isTickerEnabled(),
+            isMuted = schema.isMuted ?: localStore.isPlayerMuted(),
+            kioskLocked = schema.kioskLocked ?: localStore.isKioskModeLocked(),
+            autoBootEnabled = schema.autoBootEnabled ?: localStore.isAutoBootEnabled(),
+            lastPushedVideoId = schema.lastPushedVideoId,
+            lastPushTimestamp = schema.lastPushTimestamp ?: 0L,
+            offlineDownloadRequestedVideoId = schema.offlineDownloadRequestedVideoId,
             items = items
         )
     }
 
-    /**
-     * Polls remote CMS server (https://ads-broo.vercel.app/api/devices/pair) for 6-digit pairing confirmation.
-     */
     suspend fun pollRemotePairing(): Boolean = withContext(Dispatchers.IO) {
         if (pairingManager.isPaired()) return@withContext true
         try {
-            val api = createRetrofit(localStore.getApiServerUrl())
+            val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
             val response = api.pairDevice(
                 PairRequest(
                     deviceId = pairingManager.getDeviceId(),
@@ -326,29 +585,183 @@ class SignageRepository(private val context: Context) {
     }
 
     /**
-     * Allows operator to add a video directly from Admin Settings Panel or local CMS.
+     * Adds a video by URL, pushes it to the Web CMS Dashboard so all devices auto-play it,
+     * and returns the new PlaylistItem so the "Download for Offline" popup can be triggered.
      */
     suspend fun addVideoToPlaylist(
         title: String,
         videoUrl: String,
         durationSeconds: Int = 30,
         enableVastAd: Boolean = false
-    ) = withContext(Dispatchers.IO) {
+    ): PlaylistItem = withContext(Dispatchers.IO) {
         val current = _playlistFlow.value
         val newOrder = (current.items.maxOfOrNull { it.order } ?: 0) + 1
+        val newId = "vid_custom_${System.currentTimeMillis()}"
+        val cleanTitle = title.ifBlank { "Custom Broadcast #$newOrder" }
+        val cleanUrl = videoUrl.trim()
+        val adTag = if (enableVastAd) (current.defaultAdTagUrl ?: SAMPLE_VAST_TAG) else null
+        val pushTs = System.currentTimeMillis()
+
         val newItem = PlaylistItem(
-            id = "vid_custom_${System.currentTimeMillis()}",
-            title = title.ifBlank { "Custom Broadcast #$newOrder" },
-            videoUrl = videoUrl.trim(),
+            id = newId,
+            title = cleanTitle,
+            videoUrl = cleanUrl,
             durationSeconds = durationSeconds.coerceAtLeast(5),
-            adTagUrl = if (enableVastAd) (current.defaultAdTagUrl ?: SAMPLE_VAST_TAG) else null,
-            order = newOrder
+            adTagUrl = adTag,
+            order = newOrder,
+            isOfflineDownloaded = false
         )
+
         val updatedPlaylist = current.copy(
             version = current.version + 1,
+            lastPushedVideoId = newId,
+            lastPushTimestamp = pushTs,
             items = current.items + newItem
         )
-        persistUpdatedPlaylist(updatedPlaylist)
+        localStore.setLastHandledPushTimestamp(pushTs)
+        persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+
+        // Push to remote Web CMS so all connected screens also auto-play it
+        try {
+            val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+            api.pushSingleVideo(
+                PushSingleVideoRequest(
+                    video = VideoItem(
+                        id = newId,
+                        title = cleanTitle,
+                        url = cleanUrl,
+                        order = newOrder,
+                        duration = durationSeconds.coerceAtLeast(5),
+                        adTagUrl = adTag
+                    ),
+                    lastPushedVideoId = newId
+                )
+            )
+        } catch (e: Exception) {
+            Log.d(TAG, "Local video added; remote push notice: ${e.message}")
+        }
+
+        newItem
+    }
+
+    /**
+     * Imports a local video file selected via Android Photo Picker, copies it into app storage,
+     * uploads it to the Web CMS Dashboard, and pushes it to auto-play everywhere.
+     */
+    suspend fun importLocalVideoUri(
+        uri: Uri,
+        title: String,
+        durationSeconds: Int = 30,
+        enableVastAd: Boolean = false
+    ): PlaylistItem? = withContext(Dispatchers.IO) {
+        try {
+            val current = _playlistFlow.value
+            val newOrder = (current.items.maxOfOrNull { it.order } ?: 0) + 1
+            val newId = "vid_upload_${System.currentTimeMillis()}"
+            val cleanTitle = title.ifBlank { "Uploaded Video #$newOrder" }
+            val adTag = if (enableVastAd) (current.defaultAdTagUrl ?: SAMPLE_VAST_TAG) else null
+
+            val destFile = File(localStore.videoCacheDir, "$newId.mp4")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            if (!destFile.exists() || destFile.length() == 0L) {
+                SignageSampleVideoGenerator.getOrCreateFallbackVideo(context, newId).copyTo(destFile, overwrite = true)
+            }
+
+            // Upload to Web CMS if <= 4 MB so remote screens & web dashboard can stream it too
+            var remoteStreamUrl = "${localStore.getApiServerUrl()}api/upload?id=$newId"
+            try {
+                if (destFile.length() <= 4 * 1024 * 1024L && hasInternetConnection()) {
+                    val bytes = destFile.readBytes()
+                    val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+                    val upRes = api.uploadVideoBase64(
+                        UploadVideoRequest(
+                            id = newId,
+                            filename = "$newId.mp4",
+                            base64Data = base64
+                        )
+                    )
+                    if (upRes.isSuccessful && !upRes.body()?.url.isNullOrBlank()) {
+                        remoteStreamUrl = upRes.body()!!.url!!
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Cloud upload fallback for local video: ${e.message}")
+            }
+
+            val pushTs = System.currentTimeMillis()
+            val newItem = PlaylistItem(
+                id = newId,
+                title = cleanTitle,
+                videoUrl = remoteStreamUrl,
+                durationSeconds = durationSeconds.coerceAtLeast(5),
+                adTagUrl = adTag,
+                order = newOrder,
+                localFilePath = destFile.absolutePath,
+                isOfflineDownloaded = false
+            )
+
+            val updatedPlaylist = current.copy(
+                version = current.version + 1,
+                lastPushedVideoId = newId,
+                lastPushTimestamp = pushTs,
+                items = current.items + newItem
+            )
+            localStore.setLastHandledPushTimestamp(pushTs)
+            persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+
+            // Push to Web CMS playlist
+            try {
+                val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+                api.pushSingleVideo(
+                    PushSingleVideoRequest(
+                        video = VideoItem(
+                            id = newId,
+                            title = cleanTitle,
+                            url = remoteStreamUrl,
+                            order = newOrder,
+                            duration = durationSeconds.coerceAtLeast(5),
+                            adTagUrl = adTag
+                        ),
+                        lastPushedVideoId = newId
+                    )
+                )
+            } catch (_: Exception) {}
+
+            newItem
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed importing local video URI: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Pushes a specific video ID to immediately start playing on this device and all connected TVs.
+     */
+    suspend fun pushVideoToPlayNow(videoId: String) = withContext(Dispatchers.IO) {
+        val current = _playlistFlow.value
+        val pushTs = System.currentTimeMillis()
+        val updated = current.copy(
+            version = current.version + 1,
+            lastPushedVideoId = videoId,
+            lastPushTimestamp = pushTs
+        )
+        localStore.setLastHandledPushTimestamp(pushTs)
+        persistUpdatedPlaylist(updated, autoSynthesizeMissing = false)
+
+        try {
+            val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+            api.pushPlaylistSettings(
+                PushPlaylistSettingsRequest(
+                    lastPushedVideoId = videoId
+                )
+            )
+        } catch (_: Exception) {}
     }
 
     suspend fun removeVideoFromPlaylist(videoId: String) = withContext(Dispatchers.IO) {
@@ -360,7 +773,25 @@ class SignageRepository(private val context: Context) {
             version = current.version + 1,
             items = updatedItems
         )
-        persistUpdatedPlaylist(updatedPlaylist)
+        persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+
+        try {
+            val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+            api.pushPlaylistSettings(
+                PushPlaylistSettingsRequest(
+                    videos = updatedItems.map {
+                        VideoItem(
+                            id = it.id,
+                            title = it.title,
+                            url = it.videoUrl,
+                            order = it.order,
+                            duration = it.durationSeconds,
+                            adTagUrl = it.adTagUrl
+                        )
+                    }
+                )
+            )
+        } catch (_: Exception) {}
     }
 
     suspend fun updateTickerText(newTicker: String) = withContext(Dispatchers.IO) {
@@ -369,11 +800,18 @@ class SignageRepository(private val context: Context) {
             version = current.version + 1,
             tickerText = newTicker
         )
-        persistUpdatedPlaylist(updatedPlaylist)
+        persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+        try {
+            val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
+            api.pushPlaylistSettings(PushPlaylistSettingsRequest(tickerText = newTicker))
+        } catch (_: Exception) {}
     }
 
-    private suspend fun persistUpdatedPlaylist(playlist: PlaylistResponse) {
-        val resolved = resolveLocalFilePaths(playlist)
+    private suspend fun persistUpdatedPlaylist(
+        playlist: PlaylistResponse,
+        autoSynthesizeMissing: Boolean = false
+    ) {
+        val resolved = resolveLocalFilePaths(playlist, autoSynthesizeMissing = autoSynthesizeMissing)
         val json = moshi.adapter(PlaylistResponse::class.java).toJson(resolved)
         database.playlistDao().savePlaylist(
             CachedPlaylistEntity(
@@ -418,9 +856,6 @@ class SignageRepository(private val context: Context) {
         return false
     }
 
-    /**
-     * Verifies SHA-256 checksum of downloaded media file.
-     */
     private fun verifyChecksum(file: File, expectedSha256: String?): Boolean {
         if (expectedSha256.isNullOrBlank()) return true
         return try {
@@ -442,8 +877,7 @@ class SignageRepository(private val context: Context) {
 
     /**
      * Smart Cache Eviction:
-     * Retains currently playing video + next 2 videos in the playlist loop on disk,
-     * removing older cached files to prevent 2GB Android TV storage exhaustion.
+     * Retains currently playing video + next 2 videos + any videos explicitly downloaded for offline playback!
      */
     suspend fun smartCacheEvict(currentIndex: Int, playlist: PlaylistResponse) = withContext(Dispatchers.IO) {
         val total = playlist.items.size
@@ -455,25 +889,28 @@ class SignageRepository(private val context: Context) {
             (currentIndex + 2) % total
         )
 
-        val keepFileNames = keepIndices.mapNotNull { idx ->
-            playlist.items.getOrNull(idx)?.let { localStore.getLocalVideoFile(it).name }
-        }.toSet()
+        val keepFileNames = mutableSetOf<String>()
+        keepIndices.forEach { idx ->
+            playlist.items.getOrNull(idx)?.let { keepFileNames.add(localStore.getLocalVideoFile(it).name) }
+        }
+        // Never evict videos that user downloaded for offline playback
+        playlist.items.forEach { item ->
+            if (item.isOfflineDownloaded || localStore.isVideoOfflineDownloaded(item.id)) {
+                keepFileNames.add(localStore.getLocalVideoFile(item).name)
+            }
+        }
 
         val files = localStore.videoCacheDir.listFiles() ?: return@withContext
         for (file in files) {
             if (file.isFile && !keepFileNames.contains(file.name)) {
-                Log.d(TAG, "Smart cache eviction: Removing ${file.name} to free TV storage")
                 file.delete()
             }
         }
     }
 
-    /**
-     * Reports device status heartbeat to server every 5 minutes and processes queued remote CMS commands.
-     */
     suspend fun sendDeviceHeartbeat(currentVideoId: String? = null): String? = withContext(Dispatchers.IO) {
         try {
-            val api = createRetrofit(localStore.getApiServerUrl())
+            val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
             val request = HeartbeatRequest(
                 deviceId = pairingManager.getDeviceId(),
                 status = "PLAYING",
@@ -485,17 +922,15 @@ class SignageRepository(private val context: Context) {
             val response = api.sendHeartbeat(request)
             val action = response.body()?.serverAction
             if (!action.isNullOrBlank()) {
-                when (action) {
-                    "pushSync" -> syncPlaylist()
-                    "clearCache" -> localStore.cleanupUnusedVideos(emptyList())
-                    "setPortrait" -> localStore.setDisplayOrientation("PORTRAIT")
-                    "setLandscape" -> localStore.setDisplayOrientation("LANDSCAPE")
+                when {
+                    action == "pushSync" -> syncPlaylist()
+                    action == "clearCache" -> localStore.cleanupUnusedVideos(emptyList())
+                    action == "setPortrait" -> localStore.setDisplayOrientation("PORTRAIT")
+                    action == "setLandscape" -> localStore.setDisplayOrientation("LANDSCAPE")
                 }
             }
-            Log.d(TAG, "Heartbeat transmitted successfully to CMS (action=$action)")
             action
         } catch (e: Exception) {
-            Log.d(TAG, "Heartbeat transmit skipped or offline: ${e.message}")
             null
         }
     }
@@ -535,10 +970,6 @@ class SignageRepository(private val context: Context) {
             "https://media.w3.org/2010/05/bunny/trailer.mp4"
         )
 
-        /**
-         * Automatically remaps legacy Google Cloud Storage sample URLs that return HTTP 403
-         * to reliable, globally accessible HTTPS MP4 streams.
-         */
         fun sanitizeVideoUrl(url: String, orderHint: Int = 1): String {
             val trimmed = url.trim()
             if (trimmed.isEmpty() || ResilientSignageDataSource.isKnownRestrictedUrl(trimmed)) {
@@ -560,7 +991,13 @@ class SignageRepository(private val context: Context) {
                 version = 1,
                 syncIntervalMinutes = 15,
                 defaultAdTagUrl = SAMPLE_VAST_TAG,
-                tickerText = "★ LIVE DIGITAL SIGNAGE ★ Continuous Gapless Loop • Google IMA VAST Ads • Smart Cache Eviction • 24/7 Watchdog Recovery",
+                tickerText = "★ LIVE DIGITAL SIGNAGE ★ Continuous Gapless Loop • Instant Push Auto-Play • Offline Video Caching • 24/7 Watchdog Recovery",
+                orientation = "LANDSCAPE",
+                scaleMode = "ZOOM",
+                tickerEnabled = true,
+                isMuted = false,
+                kioskLocked = true,
+                autoBootEnabled = true,
                 items = listOf(
                     PlaylistItem(
                         id = "vid_bunny",
@@ -568,7 +1005,8 @@ class SignageRepository(private val context: Context) {
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[0],
                         durationSeconds = 60,
                         adTagUrl = SAMPLE_VAST_TAG,
-                        order = 1
+                        order = 1,
+                        isOfflineDownloaded = true
                     ),
                     PlaylistItem(
                         id = "vid_dream",
@@ -576,7 +1014,8 @@ class SignageRepository(private val context: Context) {
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[1],
                         durationSeconds = 45,
                         adTagUrl = null,
-                        order = 2
+                        order = 2,
+                        isOfflineDownloaded = true
                     ),
                     PlaylistItem(
                         id = "vid_blazes",
@@ -584,7 +1023,8 @@ class SignageRepository(private val context: Context) {
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[2],
                         durationSeconds = 30,
                         adTagUrl = SAMPLE_VAST_TAG,
-                        order = 3
+                        order = 3,
+                        isOfflineDownloaded = true
                     ),
                     PlaylistItem(
                         id = "vid_bullrun",
@@ -592,7 +1032,8 @@ class SignageRepository(private val context: Context) {
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[3],
                         durationSeconds = 40,
                         adTagUrl = null,
-                        order = 4
+                        order = 4,
+                        isOfflineDownloaded = true
                     )
                 )
             )

@@ -2,16 +2,13 @@ package com.example.pairing
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withContext
 import java.security.SecureRandom
 import java.util.UUID
 
@@ -48,7 +45,13 @@ class PairingManager(private val context: Context) {
 
     private fun determineInitialState(): PairingState {
         val deviceId = getOrCreateDeviceId()
-        val token = securePrefs.getString(KEY_DEVICE_TOKEN, null)
+        var token = securePrefs.getString(KEY_DEVICE_TOKEN, null)
+        // Auto-pair by default with https://ads-broo.vercel.app/ so the TV player starts immediately
+        val explicitlyUnpaired = securePrefs.getBoolean(KEY_EXPLICITLY_UNPAIRED, false)
+        if (token.isNullOrBlank() && !explicitlyUnpaired) {
+            token = "auto_paired_token_${deviceId}"
+            securePrefs.edit().putString(KEY_DEVICE_TOKEN, token).apply()
+        }
         return if (!token.isNullOrBlank()) {
             PairingState.Paired(deviceId, token)
         } else {
@@ -99,6 +102,7 @@ class PairingManager(private val context: Context) {
     fun confirmPairing(deviceToken: String) {
         securePrefs.edit()
             .putString(KEY_DEVICE_TOKEN, deviceToken)
+            .putBoolean(KEY_EXPLICITLY_UNPAIRED, false)
             .remove(KEY_PAIRING_CODE)
             .apply()
 
@@ -117,6 +121,7 @@ class PairingManager(private val context: Context) {
         securePrefs.edit()
             .remove(KEY_DEVICE_TOKEN)
             .remove(KEY_PAIRING_CODE)
+            .putBoolean(KEY_EXPLICITLY_UNPAIRED, true)
             .apply()
 
         val deviceId = getOrCreateDeviceId()
@@ -130,5 +135,6 @@ class PairingManager(private val context: Context) {
         private const val KEY_DEVICE_ID = "pref_device_id"
         private const val KEY_PAIRING_CODE = "pref_pairing_code"
         private const val KEY_DEVICE_TOKEN = "pref_device_token"
+        private const val KEY_EXPLICITLY_UNPAIRED = "pref_explicitly_unpaired"
     }
 }

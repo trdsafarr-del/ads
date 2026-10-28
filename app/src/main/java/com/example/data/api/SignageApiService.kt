@@ -1,6 +1,7 @@
 package com.example.data.api
 
 import com.example.data.model.PlaylistSchema
+import com.example.data.model.VideoItem
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import okhttp3.ResponseBody
@@ -25,7 +26,49 @@ data class HeartbeatRequest(
 @JsonClass(generateAdapter = true)
 data class HeartbeatResponse(
     @Json(name = "acknowledged") val acknowledged: Boolean = true,
-    @Json(name = "serverAction") val serverAction: String? = null
+    @Json(name = "serverAction") val serverAction: String? = null,
+    @Json(name = "playlistVersion") val playlistVersion: Int? = null,
+    @Json(name = "lastPushedVideoId") val lastPushedVideoId: String? = null,
+    @Json(name = "lastPushTimestamp") val lastPushTimestamp: Long? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PushSingleVideoRequest(
+    @Json(name = "action") val action: String = "addSingleVideo",
+    @Json(name = "video") val video: VideoItem,
+    @Json(name = "lastPushedVideoId") val lastPushedVideoId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PushPlaylistSettingsRequest(
+    @Json(name = "videos") val videos: List<VideoItem>? = null,
+    @Json(name = "orientation") val orientation: String? = null,
+    @Json(name = "scaleMode") val scaleMode: String? = null,
+    @Json(name = "tickerText") val tickerText: String? = null,
+    @Json(name = "tickerEnabled") val tickerEnabled: Boolean? = null,
+    @Json(name = "isMuted") val isMuted: Boolean? = null,
+    @Json(name = "kioskLocked") val kioskLocked: Boolean? = null,
+    @Json(name = "lastPushedVideoId") val lastPushedVideoId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PushPlaylistResponse(
+    @Json(name = "success") val success: Boolean = false,
+    @Json(name = "playlist") val playlist: PlaylistSchema? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class UploadVideoRequest(
+    @Json(name = "id") val id: String,
+    @Json(name = "filename") val filename: String,
+    @Json(name = "base64Data") val base64Data: String
+)
+
+@JsonClass(generateAdapter = true)
+data class UploadVideoResponse(
+    @Json(name = "success") val success: Boolean = false,
+    @Json(name = "videoId") val videoId: String? = null,
+    @Json(name = "url") val url: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -55,6 +98,21 @@ interface SignageApiService {
     suspend fun fetchPlaylist(
         @Query("deviceId") deviceId: String
     ): Response<PlaylistSchema>
+
+    @POST("api/playlist")
+    suspend fun pushSingleVideo(
+        @Body request: PushSingleVideoRequest
+    ): Response<PushPlaylistResponse>
+
+    @POST("api/playlist")
+    suspend fun pushPlaylistSettings(
+        @Body request: PushPlaylistSettingsRequest
+    ): Response<PushPlaylistResponse>
+
+    @POST("api/upload")
+    suspend fun uploadVideoBase64(
+        @Body request: UploadVideoRequest
+    ): Response<UploadVideoResponse>
 
     @POST("api/devices/heartbeat")
     suspend fun sendHeartbeat(

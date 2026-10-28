@@ -1,10 +1,26 @@
 const fs = require('fs');
 const path = require('path');
 
-const STATE_FILE = path.join('/tmp', 'signage_cms_state_v1.json');
+const STATE_FILE = path.join('/tmp', 'signage_cms_state_v2.json');
+const UPLOAD_DIR = path.join('/tmp', 'signage_uploads');
+
+try {
+  if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  }
+} catch (e) {
+  // ignore in read-only environments
+}
 
 const SAMPLE_VAST_TAG =
   'https://pubads.g.doubleclick.net/gampad/ads?iu=/21775744923/external/single_ad_samples&sz=640x480&cust_params=sample_ct%3Dlinear&ciu_szs=300x250%2C728x90&gdfp_req=1&output=vast&unviewed_position_start=1&env=vp&impl=s&correlator=';
+
+const RELIABLE_URLS = [
+  'https://www.w3schools.com/html/mov_bbb.mp4',
+  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+  'https://media.w3.org/2010/05/sintel/trailer.mp4',
+  'https://media.w3.org/2010/05/bunny/trailer.mp4'
+];
 
 const DEFAULT_STATE = {
   autoApprovePairing: true,
@@ -12,8 +28,15 @@ const DEFAULT_STATE = {
     version: 1,
     orientation: 'LANDSCAPE',
     scaleMode: 'ZOOM',
+    tickerEnabled: true,
+    isMuted: false,
+    kioskLocked: true,
+    autoBootEnabled: true,
+    lastPushedVideoId: null,
+    lastPushTimestamp: 0,
+    offlineDownloadRequestedVideoId: null,
     tickerText:
-      '★ LIVE DIGITAL SIGNAGE (ads-broo.vercel.app) ★ Continuous Gapless Loop • Google IMA VAST Ads • Smart Cache Eviction • 24/7 Watchdog Recovery',
+      '★ LIVE DIGITAL SIGNAGE (ads-broo.vercel.app) ★ Continuous Gapless Loop • Instant Push Auto-Play • Offline Video Caching • 24/7 Watchdog Recovery',
     ads: [
       {
         vastTag: SAMPLE_VAST_TAG,
@@ -31,7 +54,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_bunny',
         title: 'Brand Showcase: Nature & Animation',
-        url: 'https://www.w3schools.com/html/mov_bbb.mp4',
+        url: RELIABLE_URLS[0],
         order: 1,
         duration: 60,
         checksum: null,
@@ -40,7 +63,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_dream',
         title: 'Digital Arts & 3D Render Feature',
-        url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+        url: RELIABLE_URLS[1],
         order: 2,
         duration: 45,
         checksum: null,
@@ -49,7 +72,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_blazes',
         title: 'High Energy Automotive Commercial',
-        url: 'https://media.w3.org/2010/05/sintel/trailer.mp4',
+        url: RELIABLE_URLS[2],
         order: 3,
         duration: 30,
         checksum: null,
@@ -58,7 +81,7 @@ const DEFAULT_STATE = {
       {
         id: 'vid_bullrun',
         title: 'Summer Road Trip Experience',
-        url: 'https://media.w3.org/2010/05/bunny/trailer.mp4',
+        url: RELIABLE_URLS[3],
         order: 4,
         duration: 40,
         checksum: null,
@@ -70,13 +93,6 @@ const DEFAULT_STATE = {
   devices: {},
   queuedActions: {}
 };
-
-const RELIABLE_URLS = [
-  'https://www.w3schools.com/html/mov_bbb.mp4',
-  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
-  'https://media.w3.org/2010/05/sintel/trailer.mp4',
-  'https://media.w3.org/2010/05/bunny/trailer.mp4'
-];
 
 function sanitizeUrl(url, index) {
   if (!url || String(url).includes('commondatastorage.googleapis.com/gtv-videos-bucket')) {
@@ -135,5 +151,7 @@ module.exports = {
   loadState,
   saveState,
   setCors,
-  SAMPLE_VAST_TAG
+  SAMPLE_VAST_TAG,
+  RELIABLE_URLS,
+  UPLOAD_DIR
 };

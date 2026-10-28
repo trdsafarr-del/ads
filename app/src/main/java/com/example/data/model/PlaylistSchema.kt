@@ -36,5 +36,12 @@ data class PlaylistSchema(
     @Json(name = "schedule") val schedule: List<ScheduleItem> = emptyList(),
     @Json(name = "tickerText") val tickerText: String? = null,
     @Json(name = "orientation") val orientation: String? = null,
-    @Json(name = "scaleMode") val scaleMode: String? = null
+    @Json(name = "scaleMode") val scaleMode: String? = null,
+    @Json(name = "tickerEnabled") val tickerEnabled: Boolean? = null,
+    @Json(name = "isMuted") val isMuted: Boolean? = null,
+    @Json(name = "kioskLocked") val kioskLocked: Boolean? = null,
+    @Json(name = "autoBootEnabled") val autoBootEnabled: Boolean? = null,
+    @Json(name = "lastPushedVideoId") val lastPushedVideoId: String? = null,
+    @Json(name = "lastPushTimestamp") val lastPushTimestamp: Long? = null,
+    @Json(name = "offlineDownloadRequestedVideoId") val offlineDownloadRequestedVideoId: String? = null
 )

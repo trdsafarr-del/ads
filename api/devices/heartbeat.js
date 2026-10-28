@@ -11,7 +11,8 @@ module.exports = (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
       devices: Object.values(state.devices || {}),
-      queuedActions: state.queuedActions || {}
+      queuedActions: state.queuedActions || {},
+      playlistVersion: state.playlist.version || 1
     });
   }
 
@@ -49,7 +50,10 @@ module.exports = (req, res) => {
 
     return res.status(200).json({
       acknowledged: true,
-      serverAction
+      serverAction,
+      playlistVersion: state.playlist.version || 1,
+      lastPushedVideoId: state.playlist.lastPushedVideoId || null,
+      lastPushTimestamp: state.playlist.lastPushTimestamp || 0
     });
   }
 

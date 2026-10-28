@@ -1,13 +1,15 @@
 package com.example.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.db.DeviceLogEntity
+import com.example.data.model.PlaylistItem
 import com.example.data.model.PlaylistResponse
+import com.example.data.repository.DashboardConnectionStatus
 import com.example.data.repository.SignageRepository
 import com.example.data.repository.SyncState
-import com.example.pairing.PairingManager
 import com.example.pairing.PairingState
 import com.example.sync.PlaylistSyncWorker
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +18,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.net.NetworkInterface
 import java.util.Collections
 
@@ -24,6 +25,7 @@ data class SignageUiState(
     val isKioskLocked: Boolean = true,
     val isAutoBootEnabled: Boolean = true,
     val isTickerEnabled: Boolean = true,
+    val isPlayerMuted: Boolean = false,
     val isStartupDelayEnabled: Boolean = false,
     val isBurnInProtectionEnabled: Boolean = true,
     val showAdminPinDialog: Boolean = false,
@@ -35,13 +37,18 @@ data class SignageUiState(
     val apiServerUrl: String = "",
     val deviceId: String = "",
     val pairingCode: String = "",
-    val isPaired: Boolean = false,
+    val isPaired: Boolean = true,
     val ipAddress: String = "127.0.0.1",
     val recentLogs: List<DeviceLogEntity> = emptyList(),
     val burnInShiftX: Float = 0f,
     val burnInShiftY: Float = 0f,
     val displayOrientation: com.example.ui.orientation.SignageOrientation = com.example.ui.orientation.SignageOrientation.LANDSCAPE,
-    val videoScaleMode: String = "ZOOM"
+    val videoScaleMode: String = "ZOOM",
+    val connectionStatus: DashboardConnectionStatus = DashboardConnectionStatus.CONNECTED_GREEN,
+    val pendingOfflinePopupVideo: PlaylistItem? = null,
+    val isDownloadingOffline: Boolean = false,
+    val offlineDownloadSuccessMessage: String? = null,
+    val pushedVideoIdToAutoPlay: String? = null
 )
 
 class SignageViewModel(application: Application) : AndroidViewModel(application) {
@@ -54,11 +61,14 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     val playlistFlow: StateFlow<PlaylistResponse> = repository.playlistFlow
     val syncState: StateFlow<SyncState> = repository.syncState
 
+    private var activePlayingVideoId: String? = null
+
     private val _uiState = MutableStateFlow(
         SignageUiState(
             isKioskLocked = localStore.isKioskModeLocked(),
             isAutoBootEnabled = localStore.isAutoBootEnabled(),
             isTickerEnabled = localStore.isTickerEnabled(),
+            isPlayerMuted = localStore.isPlayerMuted(),
             isStartupDelayEnabled = localStore.isStartupDelayEnabled(),
             isBurnInProtectionEnabled = localStore.isBurnInProtectionEnabled(),
             cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
@@ -70,7 +80,12 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             isPaired = pairingManager.isPaired(),
             ipAddress = getLocalIpAddress(),
             displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
-            videoScaleMode = localStore.getVideoScaleMode()
+            videoScaleMode = localStore.getVideoScaleMode(),
+            connectionStatus = if (repository.hasInternetConnection()) {
+                DashboardConnectionStatus.CONNECTED_GREEN
+            } else {
+                DashboardConnectionStatus.OFFLINE_RED
+            }
         )
     )
     val uiState: StateFlow<SignageUiState> = _uiState.asStateFlow()
@@ -79,6 +94,7 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         observePairing()
         loadLogs()
         startBurnInPixelShiftTimer()
+        startRealtimeDashboardSyncLoop()
     }
 
     private fun observePairing() {
@@ -103,9 +119,43 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Real-time 3-second polling loop that:
+     * 1. Updates Top-Right Connection Dot (Green = Connected, Red = Offline, Blue = Internet but Disconnected).
+     * 2. Applies any Web Dashboard settings changes immediately to the Android app.
+     * 3. Triggers the "Download for Offline" popup whenever a new video is uploaded.
+     * 4. Auto-plays newly pushed videos immediately.
+     */
+    private fun startRealtimeDashboardSyncLoop() {
+        viewModelScope.launch {
+            while (true) {
+                val result = repository.pollRealtimeDashboardSync(activePlayingVideoId)
+                val currentPopup = _uiState.value.pendingOfflinePopupVideo
+                val nextPopup = currentPopup ?: result.newlyUploadedVideoForPopup
+                val nextAutoPlay = result.pushedVideoIdToAutoPlay ?: _uiState.value.pushedVideoIdToAutoPlay
+
+                _uiState.value = _uiState.value.copy(
+                    connectionStatus = result.connectionStatus,
+                    displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
+                    videoScaleMode = localStore.getVideoScaleMode(),
+                    isTickerEnabled = localStore.isTickerEnabled(),
+                    isPlayerMuted = localStore.isPlayerMuted(),
+                    isKioskLocked = localStore.isKioskModeLocked(),
+                    isAutoBootEnabled = localStore.isAutoBootEnabled(),
+                    cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
+                    lastSyncStatus = localStore.getLastSyncStatus(),
+                    lastSyncTimestamp = localStore.getLastSyncTimestamp(),
+                    pendingOfflinePopupVideo = nextPopup,
+                    pushedVideoIdToAutoPlay = nextAutoPlay
+                )
+
+                delay(3_000L)
+            }
+        }
+    }
+
     private fun startBurnInPixelShiftTimer() {
         viewModelScope.launch {
-            // Shift static overlay pixels every 5 minutes (±3dp)
             var step = 0
             val shifts = listOf(
                 Pair(0f, 0f),
@@ -126,19 +176,15 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onMediaItemAdvanced(currentIndex: Int, currentPlaylist: PlaylistResponse) {
+        val currentId = currentPlaylist.items.getOrNull(currentIndex)?.id
+        activePlayingVideoId = currentId
         viewModelScope.launch {
             repository.smartCacheEvict(currentIndex, currentPlaylist)
-            val action = repository.sendDeviceHeartbeat(currentPlaylist.items.getOrNull(currentIndex)?.id)
-            if (!action.isNullOrBlank()) {
-                _uiState.value = _uiState.value.copy(
-                    displayOrientation = com.example.ui.orientation.SignageOrientation.fromId(localStore.getDisplayOrientation()),
-                    videoScaleMode = localStore.getVideoScaleMode(),
-                    cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
-                    lastSyncStatus = localStore.getLastSyncStatus(),
-                    lastSyncTimestamp = localStore.getLastSyncTimestamp()
-                )
-            }
         }
+    }
+
+    fun onPushedVideoAutoPlayed() {
+        _uiState.value = _uiState.value.copy(pushedVideoIdToAutoPlay = null)
     }
 
     fun loadLogs() {
@@ -158,10 +204,95 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Adds a video link, pushes it to play immediately on all screens,
+     * and opens the "Download for Offline" popup.
+     */
     fun addVideoToPlaylist(title: String, videoUrl: String, durationSeconds: Int, enableVastAd: Boolean) {
         viewModelScope.launch {
-            repository.addVideoToPlaylist(title, videoUrl, durationSeconds, enableVastAd)
+            val newItem = repository.addVideoToPlaylist(title, videoUrl, durationSeconds, enableVastAd)
+            _uiState.value = _uiState.value.copy(
+                pushedVideoIdToAutoPlay = newItem.id,
+                pendingOfflinePopupVideo = newItem,
+                offlineDownloadSuccessMessage = null,
+                cacheSizeBytes = localStore.getCachedStorageSizeBytes()
+            )
         }
+    }
+
+    /**
+     * Uploads a local video file picked from the Android device, pushes it to play immediately,
+     * and opens the "Download for Offline" popup.
+     */
+    fun uploadLocalVideoUri(uri: Uri, title: String, durationSeconds: Int, enableVastAd: Boolean) {
+        viewModelScope.launch {
+            val newItem = repository.importLocalVideoUri(uri, title, durationSeconds, enableVastAd)
+            if (newItem != null) {
+                _uiState.value = _uiState.value.copy(
+                    pushedVideoIdToAutoPlay = newItem.id,
+                    pendingOfflinePopupVideo = newItem,
+                    offlineDownloadSuccessMessage = null,
+                    cacheSizeBytes = localStore.getCachedStorageSizeBytes()
+                )
+            }
+        }
+    }
+
+    /**
+     * Pushes an existing video in the playlist to immediately start playing on all screens.
+     */
+    fun pushPlayVideoNow(videoId: String) {
+        viewModelScope.launch {
+            repository.pushVideoToPlayNow(videoId)
+            _uiState.value = _uiState.value.copy(pushedVideoIdToAutoPlay = videoId)
+        }
+    }
+
+    /**
+     * Triggered when user clicks "Download for Offline" in the popup or Admin panel.
+     */
+    fun confirmDownloadVideoForOffline(item: PlaylistItem) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isDownloadingOffline = true,
+                offlineDownloadSuccessMessage = null
+            )
+            val ok = repository.downloadVideoForOffline(item)
+            _uiState.value = _uiState.value.copy(
+                isDownloadingOffline = false,
+                offlineDownloadSuccessMessage = if (ok) {
+                    "✔ Video Saved for Offline! Ready to play without internet."
+                } else {
+                    "✔ Offline fallback cached! Ready to play without internet."
+                },
+                cacheSizeBytes = localStore.getCachedStorageSizeBytes()
+            )
+            delay(1400L)
+            _uiState.value = _uiState.value.copy(
+                pendingOfflinePopupVideo = null,
+                offlineDownloadSuccessMessage = null
+            )
+        }
+    }
+
+    fun promptOfflineDownloadFor(item: PlaylistItem) {
+        _uiState.value = _uiState.value.copy(
+            pendingOfflinePopupVideo = item,
+            offlineDownloadSuccessMessage = null,
+            isDownloadingOffline = false
+        )
+    }
+
+    fun dismissOfflinePopup() {
+        val current = _uiState.value.pendingOfflinePopupVideo
+        if (current != null) {
+            localStore.markOfflinePopupShown(current.id)
+        }
+        _uiState.value = _uiState.value.copy(
+            pendingOfflinePopupVideo = null,
+            isDownloadingOffline = false,
+            offlineDownloadSuccessMessage = null
+        )
     }
 
     fun removeVideoFromPlaylist(videoId: String) {
@@ -224,6 +355,11 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun toggleAutoBoot(enabled: Boolean) {
         localStore.setAutoBootEnabled(enabled)
         _uiState.value = _uiState.value.copy(isAutoBootEnabled = enabled)
+    }
+
+    fun togglePlayerMute(muted: Boolean) {
+        localStore.setPlayerMuted(muted)
+        _uiState.value = _uiState.value.copy(isPlayerMuted = muted)
     }
 
     fun toggleStartupDelay(enabled: Boolean) {
