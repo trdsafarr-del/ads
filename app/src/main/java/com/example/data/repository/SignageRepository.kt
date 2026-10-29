@@ -1528,44 +1528,7 @@ class SignageRepository(private val context: Context) {
                 isMuted = false,
                 kioskLocked = true,
                 autoBootEnabled = true,
-                items = listOf(
-                    PlaylistItem(
-                        id = "vid_bunny",
-                        title = "Brand Showcase: Nature & Animation",
-                        videoUrl = RELIABLE_SAMPLE_VIDEOS[0],
-                        durationSeconds = 60,
-                        adTagUrl = SAMPLE_VAST_TAG,
-                        order = 1,
-                        isOfflineDownloaded = false
-                    ),
-                    PlaylistItem(
-                        id = "vid_dream",
-                        title = "Digital Arts & 3D Render Feature",
-                        videoUrl = RELIABLE_SAMPLE_VIDEOS[1],
-                        durationSeconds = 45,
-                        adTagUrl = null,
-                        order = 2,
-                        isOfflineDownloaded = false
-                    ),
-                    PlaylistItem(
-                        id = "vid_blazes",
-                        title = "High Energy Automotive Commercial",
-                        videoUrl = RELIABLE_SAMPLE_VIDEOS[2],
-                        durationSeconds = 30,
-                        adTagUrl = null,
-                        order = 3,
-                        isOfflineDownloaded = false
-                    ),
-                    PlaylistItem(
-                        id = "vid_bullrun",
-                        title = "Summer Road Trip Experience",
-                        videoUrl = RELIABLE_SAMPLE_VIDEOS[3],
-                        durationSeconds = 40,
-                        adTagUrl = null,
-                        order = 4,
-                        isOfflineDownloaded = false
-                    )
-                )
+                items = emptyList()
             )
         }
     }

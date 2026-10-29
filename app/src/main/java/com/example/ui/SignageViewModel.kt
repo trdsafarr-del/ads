@@ -263,9 +263,9 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
                         cacheSizeBytes = localStore.getCachedStorageSizeBytes(),
                         lastSyncStatus = localStore.getLastSyncStatus(),
                         lastSyncTimestamp = localStore.getLastSyncTimestamp(),
-                        showAdminSettingsPanel = if (isForcePlayTriggered) false else _uiState.value.showAdminSettingsPanel,
-                        showAdminPinDialog = if (isForcePlayTriggered) false else _uiState.value.showAdminPinDialog,
-                        showDiagnosticOverlay = if (isForcePlayTriggered) false else _uiState.value.showDiagnosticOverlay,
+                        showAdminSettingsPanel = _uiState.value.showAdminSettingsPanel,
+                        showAdminPinDialog = _uiState.value.showAdminPinDialog,
+                        showDiagnosticOverlay = _uiState.value.showDiagnosticOverlay,
                         pendingOfflinePopupVideo = nextPopup,
                         pushedVideoIdToAutoPlay = nextAutoPlay
                     )
