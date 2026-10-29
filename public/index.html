@@ -2824,6 +2824,7 @@
       currentState.videos = currentState.videos.filter(v => v.id !== id);
       selectedVideoIdsSet.delete(id);
       await publishAllChanges();
+      showToast('Video deleted successfully & synced!');
     }
 
     async function approvePairingCode() {

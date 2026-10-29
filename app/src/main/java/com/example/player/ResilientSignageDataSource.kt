@@ -101,9 +101,27 @@ class ResilientSignageDataSource(
                 fallbackStreamDs.open(backupSpec)
             }
         } else {
-            activeDataSource = baseDataSource
-            activeUri = originalUri
-            return baseDataSource.open(dataSpec)
+            return try {
+                activeDataSource = baseDataSource
+                activeUri = originalUri
+                baseDataSource.open(dataSpec)
+            } catch (fileErr: IOException) {
+                Log.w(TAG, "Local file open failed (${fileErr.message}) for $originalUri, falling back to network stream...")
+                try {
+                    baseDataSource.close()
+                } catch (_: Exception) {}
+
+                val fallbackStreamDs = backupDataSourceProvider()
+                activeDataSource = fallbackStreamDs
+                val backupUri = Uri.parse(REAL_BACKUP_STREAM_URL)
+                activeUri = backupUri
+                val backupSpec = dataSpec.buildUpon()
+                    .setUri(backupUri)
+                    .setPosition(0L)
+                    .setLength(C.LENGTH_UNSET.toLong())
+                    .build()
+                fallbackStreamDs.open(backupSpec)
+            }
         }
     }
 

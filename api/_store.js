@@ -183,12 +183,12 @@ async function loadStateAsync() {
         const remoteVer = Number(remoteState.playlist && remoteState.playlist.version) || 1;
 
         let activePlaylist = localState.playlist;
-        if (localHasCustom && !remoteHasCustom) {
-          activePlaylist = localState.playlist;
-        } else if (
-          remoteVer >= localVer ||
-          remoteUpdatedMs >= (Number(localState.updatedAtMs) || 0)
+        if (
+          (Number(localState.updatedAtMs) || 0) >= (remoteUpdatedMs || 0) ||
+          localVer >= remoteVer
         ) {
+          activePlaylist = localState.playlist;
+        } else {
           activePlaylist = remoteState.playlist;
         }
 
