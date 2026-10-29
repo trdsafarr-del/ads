@@ -459,7 +459,14 @@ class SignageRepository(private val context: Context) {
                 fsSchema != null && apiSchema != null -> {
                     val fsPush = fsSchema.lastPushTimestamp ?: 0L
                     val apiPush = apiSchema.lastPushTimestamp ?: 0L
-                    if (fsPush >= apiPush || fsSchema.version >= apiSchema.version) fsSchema else apiSchema
+                    val fsHasCustom = fsSchema.videos.any { !DEFAULT_SAMPLE_IDS.contains(it.id) }
+                    val apiHasCustom = apiSchema.videos.any { !DEFAULT_SAMPLE_IDS.contains(it.id) }
+                    when {
+                        apiHasCustom && !fsHasCustom -> apiSchema
+                        fsHasCustom && !apiHasCustom -> fsSchema
+                        fsPush >= apiPush || fsSchema.version >= apiSchema.version -> fsSchema
+                        else -> apiSchema
+                    }
                 }
                 fsSchema != null -> fsSchema
                 apiSchema != null -> apiSchema
@@ -1382,9 +1389,10 @@ class SignageRepository(private val context: Context) {
         fun sanitizeVideoUrl(url: String, orderHint: Int = 1, videoId: String? = null): String {
             val trimmed = url.trim()
             if (trimmed.contains("tmpfiles.org", ignoreCase = true)) {
-                if (!videoId.isNullOrBlank() && videoId.startsWith("vid_")) {
-                    return "https://ads-broo.vercel.app/api/upload?id=$videoId"
+                if (trimmed.contains("tmpfiles.org/dl/", ignoreCase = true)) {
+                    return trimmed
                 }
+                return trimmed.replace("tmpfiles.org/", "tmpfiles.org/dl/")
             }
             if (trimmed.isEmpty() || ResilientSignageDataSource.isKnownRestrictedUrl(trimmed)) {
                 return when {

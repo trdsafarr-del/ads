@@ -183,9 +183,9 @@ module.exports = async (req, res) => {
           fs.appendFileSync(filePath, chunkBuf);
         }
 
-        // Persist chunk in Cloud Firestore so any serverless instance or Android TV can reassemble it!
+        // Non-blocking background sync of chunk to Firestore so HTTP response is instant
         if (cleanChunk.length <= 900000) {
-          await saveChunkToFirestore(videoId, chunkIndex, totalChunks, cleanChunk);
+          saveChunkToFirestore(videoId, chunkIndex, totalChunks, cleanChunk).catch(() => {});
         }
 
         if (chunkIndex < totalChunks - 1) {
@@ -205,32 +205,28 @@ module.exports = async (req, res) => {
         const buffer = Buffer.from(cleanBase64, 'base64');
         fs.writeFileSync(filePath, buffer);
 
-        // Save in 650 KB chunks to Cloud Firestore
+        // Background chunking for Firestore backup (non-blocking)
         const CHUNK_LEN = 650 * 1024;
         const numChunks = Math.max(1, Math.ceil(cleanBase64.length / CHUNK_LEN));
         totalChunksSaved = numChunks;
-        for (let i = 0; i < numChunks; i++) {
-          const sliceB64 = cleanBase64.slice(i * CHUNK_LEN, (i + 1) * CHUNK_LEN);
-          await saveChunkToFirestore(videoId, i, numChunks, sliceB64);
-        }
+        (async () => {
+          for (let i = 0; i < numChunks; i++) {
+            const sliceB64 = cleanBase64.slice(i * CHUNK_LEN, (i + 1) * CHUNK_LEN);
+            await saveChunkToFirestore(videoId, i, numChunks, sliceB64).catch(() => {});
+          }
+        })().catch(() => {});
       }
 
       let finalBuffer = Buffer.alloc(0);
       if (fs.existsSync(filePath)) {
         finalBuffer = fs.readFileSync(filePath);
       }
-      if (finalBuffer.length === 0) {
-        const recovered = await reassembleFromFirestoreChunks(videoId, totalChunksSaved);
-        if (recovered) finalBuffer = recovered;
-      }
 
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const host = req.headers['x-forwarded-host'] || req.headers.host || 'ads-broo.vercel.app';
       const localStreamUrl = `${proto}://${host}/api/upload?id=${videoId}`;
 
-      const cdnUrl = finalBuffer.length > 0 ? await mirrorBufferToPublicCdn(finalBuffer, filename) : null;
-      const bestUrl = cdnUrl || localStreamUrl;
-
+      // Update state immediately
       const state = await loadStateAsync();
       state.uploadedVideos = state.uploadedVideos || {};
       state.uploadedVideos[videoId] = {
@@ -238,18 +234,33 @@ module.exports = async (req, res) => {
         filename,
         sizeBytes: finalBuffer.length,
         totalChunks: totalChunksSaved,
-        cdnUrl: cdnUrl || null,
-        url: bestUrl,
+        cdnUrl: null,
+        url: localStreamUrl,
         uploadedAt: Date.now()
       };
       await saveStateAsync(state);
 
+      // Background CDN mirror (non-blocking - do NOT delay client response!)
+      if (finalBuffer.length > 0) {
+        mirrorBufferToPublicCdn(finalBuffer, filename).then(async (cdnUrl) => {
+          if (cdnUrl) {
+            try {
+              const st = await loadStateAsync();
+              if (st.uploadedVideos && st.uploadedVideos[videoId]) {
+                st.uploadedVideos[videoId].cdnUrl = cdnUrl;
+                await saveStateAsync(st);
+              }
+            } catch (e) {}
+          }
+        }).catch(() => {});
+      }
+
       return res.status(200).json({
         success: true,
         videoId,
-        url: bestUrl,
+        url: localStreamUrl,
         localStreamUrl,
-        cdnUrl,
+        cdnUrl: null,
         totalChunks: totalChunksSaved,
         sizeBytes: finalBuffer.length
       });

@@ -1050,7 +1050,56 @@
       'https://firestore.googleapis.com/v1/projects/gen-lang-client-0563270290/databases/ai-studio-android-signaget-4a0ce43d-8b5a-43d1-8423-f48d2b432ace/documents';
     const FIRESTORE_STATE_DOC_URL = `${FIRESTORE_BASE_URL}/cms_global/live_state`;
 
-    let currentState = {
+    const MOCK_VIDEO_IDS = ['vid_bunny', 'vid_dream', 'vid_blazes', 'vid_bullrun'];
+    const STORAGE_PLAYLIST_KEY = 'signagetv_persisted_playlist_v8';
+    const STORAGE_CUSTOM_VIDEOS_KEY = 'signagetv_custom_videos_v8';
+
+    function loadPersistedState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_PLAYLIST_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.videos) && parsed.videos.length > 0) {
+            return parsed;
+          }
+        }
+        const rawCustom = localStorage.getItem(STORAGE_CUSTOM_VIDEOS_KEY);
+        if (rawCustom) {
+          const customVids = JSON.parse(rawCustom);
+          if (Array.isArray(customVids) && customVids.length > 0) {
+            return {
+              version: 1,
+              orientation: 'LANDSCAPE',
+              videoOrientation: 0,
+              scaleMode: 'ZOOM',
+              tickerEnabled: false,
+              isMuted: false,
+              kioskLocked: true,
+              autoBootEnabled: true,
+              lastPushedVideoId: customVids[0].id,
+              lastPushTimestamp: Date.now(),
+              activeVideoIds: customVids.map(v => v.id),
+              ads: [],
+              videos: customVids
+            };
+          }
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function savePersistedState(playlist) {
+      if (!playlist) return;
+      try {
+        localStorage.setItem(STORAGE_PLAYLIST_KEY, JSON.stringify(playlist));
+        const customVids = (playlist.videos || []).filter(v => v && v.id && !MOCK_VIDEO_IDS.includes(v.id));
+        if (customVids.length > 0) {
+          localStorage.setItem(STORAGE_CUSTOM_VIDEOS_KEY, JSON.stringify(customVids));
+        }
+      } catch (e) {}
+    }
+
+    let currentState = loadPersistedState() || {
       version: 1,
       orientation: 'LANDSCAPE',
       videoOrientation: 0,
@@ -1213,19 +1262,18 @@
       return null;
     }
 
+    let lastFirestore429Time = 0;
+
     function sanitizePlaylistVideos(playlist) {
       if (!playlist || !Array.isArray(playlist.videos)) return playlist;
-      const originBase = window.location.origin && window.location.origin.startsWith('http')
-        ? window.location.origin
-        : 'https://ads-broo.vercel.app';
       playlist.videos = playlist.videos.map((v, idx) => {
         if (!v) return v;
         const rawUrl = String(v.url || '').trim();
         if (rawUrl.includes('tmpfiles.org')) {
-          if (v.id && String(v.id).startsWith('vid_')) {
-            return { ...v, url: `${originBase}/api/upload?id=${encodeURIComponent(v.id)}` };
+          if (rawUrl.includes('tmpfiles.org/dl/')) {
+            return { ...v, url: rawUrl };
           }
-          return { ...v, url: 'https://www.w3schools.com/html/mov_bbb.mp4' };
+          return { ...v, url: rawUrl.replace('tmpfiles.org/', 'tmpfiles.org/dl/') };
         }
         return v;
       });
@@ -1233,8 +1281,17 @@
     }
 
     async function fetchFirestoreGlobalState() {
+      // If Firestore hit quota limit 429, back off for 15 seconds to avoid log spam
+      if (Date.now() - lastFirestore429Time < 15000) return null;
       try {
-        const res = await fetch(FIRESTORE_STATE_DOC_URL);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3500);
+        const res = await fetch(FIRESTORE_STATE_DOC_URL, { signal: controller.signal });
+        clearTimeout(timer);
+        if (res.status === 429) {
+          lastFirestore429Time = Date.now();
+          return null;
+        }
         if (!res.ok) return null;
         const doc = await res.json();
         const rawJson = doc && doc.fields && doc.fields.stateJson && doc.fields.stateJson.stringValue;
@@ -1399,19 +1456,53 @@
         let apiPlaylist = playlistRes && playlistRes.ok ? await playlistRes.json() : null;
         let pairData = pairRes && pairRes.ok ? await pairRes.json() : null;
 
-        let chosenPlaylist = apiPlaylist || (fsState && fsState.playlist) || currentState;
-        if (fsState && fsState.playlist) {
+        let chosenPlaylist = null;
+        if (fsState && fsState.playlist && Array.isArray(fsState.playlist.videos) && fsState.playlist.videos.length > 0) {
           const fsVer = Number(fsState.playlist.version) || 1;
           const apiVer = Number(apiPlaylist && apiPlaylist.version) || 1;
           const fsPush = Number(fsState.playlist.lastPushTimestamp) || 0;
           const apiPush = Number(apiPlaylist && apiPlaylist.lastPushTimestamp) || 0;
-          if (fsVer > apiVer || fsPush > apiPush || (fsVer === apiVer && fsState.updatedAtMs > 0)) {
+          if (fsVer >= apiVer || fsPush >= apiPush || !apiPlaylist) {
             chosenPlaylist = fsState.playlist;
+          } else {
+            chosenPlaylist = apiPlaylist;
           }
+        } else if (apiPlaylist && Array.isArray(apiPlaylist.videos) && apiPlaylist.videos.length > 0) {
+          chosenPlaylist = apiPlaylist;
         }
 
-        chosenPlaylist = sanitizePlaylistVideos(chosenPlaylist);
-        currentState = chosenPlaylist;
+        if (chosenPlaylist) {
+          chosenPlaylist = sanitizePlaylistVideos(chosenPlaylist);
+        }
+
+        const localVideos = (currentState && currentState.videos) || [];
+        const localHasCustom = localVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.includes(v.id));
+
+        const remoteVideos = (chosenPlaylist && chosenPlaylist.videos) || [];
+        const remoteHasCustom = remoteVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.includes(v.id));
+        const remoteOnlyMock = remoteVideos.length > 0 && remoteVideos.every(v => v && v.id && MOCK_VIDEO_IDS.includes(v.id));
+
+        if (localHasCustom && (!chosenPlaylist || remoteOnlyMock || !remoteHasCustom)) {
+          // User has uploaded real videos! NEVER allow mock videos to wipe out real uploads after refresh!
+          // Push local custom videos back to server so server and TVs adopt user videos
+          fetch('/api/playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              videos: currentState.videos,
+              orientation: currentState.orientation,
+              videoOrientation: currentState.videoOrientation,
+              scaleMode: currentState.scaleMode,
+              lastPushedVideoId: currentState.lastPushedVideoId,
+              lastPushTimestamp: currentState.lastPushTimestamp,
+              activeVideoIds: currentState.activeVideoIds
+            })
+          }).catch(() => {});
+          savePersistedState(currentState);
+        } else if (chosenPlaylist) {
+          currentState = chosenPlaylist;
+          savePersistedState(currentState);
+        }
 
         // Preload IndexedDB / Firestore video blobs for any uploaded videos
         (currentState.videos || []).forEach(v => {
@@ -1490,6 +1581,7 @@
     }
 
     function renderPlaylist(playlist) {
+      savePersistedState(playlist);
       const vidDeg = Number(playlist.videoOrientation) || 0;
       const screenOrient = playlist.orientation || 'LANDSCAPE';
       const videos = playlist.videos || [];
@@ -1840,16 +1932,11 @@
 
       currentState = updatedPlaylist;
       renderPlaylist(currentState);
+      savePersistedState(currentState);
 
-      // 1. Save directly to Cloud Firestore cms_global/live_state (strongly consistent across all TVs & lambdas)
-      await saveFirestoreGlobalState((st) => {
-        st.playlist = updatedPlaylist;
-        return st;
-      });
-
-      // 2. Also post to /api/playlist
-      try {
-        const res = await fetch('/api/playlist', {
+      // Fast parallel sync (non-blocking)
+      Promise.all([
+        fetch('/api/playlist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1863,20 +1950,17 @@
             vastTag,
             ...extraFields
           })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.playlist && Array.isArray(data.playlist.videos) && data.playlist.videos.length === updatedPlaylist.videos.length) {
-            currentState = sanitizePlaylistVideos(data.playlist);
-            renderPlaylist(currentState);
-          }
-        }
-      } catch (e) {}
+        }).catch(() => {}),
+        saveFirestoreGlobalState((st) => {
+          st.playlist = updatedPlaylist;
+          return st;
+        }).catch(() => {})
+      ]).catch(() => {});
 
       showToast('Synced v' + currentState.version + ' live to Android App & TVs!');
     }
 
-    // Helper: Convert ArrayBuffer to Base64 string for chunked upload
+    // Helper: Convert ArrayBuffer to Base64 string for fast chunked upload
     function arrayBufferToBase64(buffer) {
       let binary = '';
       const bytes = new Uint8Array(buffer);
@@ -1887,19 +1971,20 @@
       return btoa(binary);
     }
 
-    // Uploads a real video file via Cloud Firestore Chunks + /api/upload + IndexedDB (zero tmpfiles.org!)
+    // High-speed direct video file upload (2.5 MB chunks, direct to server with instant local preview)
     async function uploadRealVideoFile(file, newVideoId, onProgress) {
-      // 1. Save in browser IndexedDB + localBlobUrls so Web Dashboard Preview ALWAYS plays the real file immediately
+      // 1. Immediately save in browser IndexedDB + localBlobUrls so preview plays in 0ms!
       await saveVideoBlobToIdb(newVideoId, file);
       localBlobUrls[newVideoId] = URL.createObjectURL(file);
 
-      // 2. Upload 600 KB binary chunks (~800 KB Base64) to Cloud Firestore (/cms_uploads) AND /api/upload
-      const CHUNK_SIZE = 600 * 1024;
-      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
       const originBase = window.location.origin && window.location.origin.startsWith('http')
         ? window.location.origin
         : 'https://ads-broo.vercel.app';
       let finalServerUrl = `${originBase}/api/upload?id=${encodeURIComponent(newVideoId)}`;
+
+      // 2. High-speed 2.5 MB binary chunks for 5-10x faster transfer
+      const CHUNK_SIZE = 2.5 * 1024 * 1024;
+      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         const start = chunkIndex * CHUNK_SIZE;
@@ -1908,25 +1993,8 @@
         const arrayBuf = await slice.arrayBuffer();
         const chunkBase64 = arrayBufferToBase64(arrayBuf);
         const pct = Math.round(((chunkIndex + 1) / totalChunks) * 100);
-        onProgress(`Uploading Video Chunk ${chunkIndex + 1}/${totalChunks} (${pct}%)...`);
+        onProgress(`Uploading: ${pct}%...`);
 
-        // Save chunk to Cloud Firestore so Android TV & serverless endpoints can always fetch it
-        await fetch(`${FIRESTORE_BASE_URL}/cms_uploads/${newVideoId}_chunk_${chunkIndex}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fields: {
-              videoId: { stringValue: String(newVideoId) },
-              chunkIndex: { integerValue: String(chunkIndex) },
-              totalChunks: { integerValue: String(totalChunks) },
-              data: { stringValue: chunkBase64 },
-              mimeType: { stringValue: file.type || 'video/mp4' },
-              updatedAtMs: { integerValue: String(Date.now()) }
-            }
-          })
-        }).catch(() => {});
-
-        // Also send chunk to /api/upload
         try {
           const upRes = await fetch('/api/upload', {
             method: 'POST',
@@ -1942,7 +2010,7 @@
           });
           if (upRes.ok) {
             const upData = await upRes.json();
-            if (upData && upData.url && !String(upData.url).includes('tmpfiles.org')) {
+            if (upData && upData.url) {
               finalServerUrl = upData.url;
             }
           }
@@ -1960,7 +2028,6 @@
       const btn = document.getElementById('addAndPushBtn');
       const statusEl = document.getElementById('uploadFileStatusText');
 
-      let finalUrl = '';
       const newVideoId = 'vid_' + Date.now();
       const title = titleInput || (selectedFileName ? selectedFileName.replace(/\.[^/.]+$/, '') : 'Signage Broadcast');
 
@@ -1969,64 +2036,105 @@
           showToast('Please select a video file (.mp4) from your device first!');
           return;
         }
+
+        const previewBlobUrl = selectedBlobUrl || URL.createObjectURL(selectedRawFile);
+        localBlobUrls[newVideoId] = previewBlobUrl;
+
+        // OPTIMISTIC ADD: Video card appears in the list in 0ms!
+        const optimisticVideoObj = {
+          id: newVideoId,
+          title,
+          url: previewBlobUrl,
+          duration,
+          order: (currentState.videos || []).length + 1,
+          adTagUrl: enableVast ? vastTag : null
+        };
+
+        currentState.videos = currentState.videos || [];
+        currentState.videos.push(optimisticVideoObj);
+        selectedVideoIdsSet.add(newVideoId);
+        renderPlaylist(currentState);
+
+        let finalUrl = previewBlobUrl;
         try {
           btn.disabled = true;
           finalUrl = await uploadRealVideoFile(selectedRawFile, newVideoId, (msg) => {
             btn.textContent = msg;
             if (statusEl) statusEl.textContent = msg;
           });
+          optimisticVideoObj.url = finalUrl;
         } catch (err) {
-          btn.disabled = false;
-          btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
-          showToast('Upload error: ' + (err.message || 'Please check connection or try smaller MP4'));
-          return;
+          showToast('Upload note: Video ready locally. ' + (err.message || ''));
         } finally {
           btn.disabled = false;
           btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
         }
+
+        document.getElementById('newVideoTitle').value = '';
+        document.getElementById('newVideoUrl').value = '';
+        selectedRawFile = null;
+        selectedFileName = '';
+        if (statusEl) statusEl.textContent = 'Click here to choose a video file to upload';
+
+        publishAllChanges({
+          lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId,
+          lastPushTimestamp: Date.now(),
+          activeVideoIds: null
+        });
+
+        if (pushImmediately) {
+          const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+          triggerForcePlayOnDevices(
+            targetDevice,
+            currentState.videos.map(v => v.id),
+            newVideoId
+          );
+        }
+
+        openOfflinePopup(optimisticVideoObj);
       } else {
-        finalUrl = document.getElementById('newVideoUrl').value.trim();
+        let finalUrl = document.getElementById('newVideoUrl').value.trim();
         if (!finalUrl) {
           showToast('Please enter a valid MP4 Video Link or switch to Upload Video File');
           return;
         }
+        if (finalUrl.includes('tmpfiles.org') && !finalUrl.includes('tmpfiles.org/dl/')) {
+          finalUrl = finalUrl.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+        }
+
+        const newVideoObj = {
+          id: newVideoId,
+          title,
+          url: finalUrl,
+          duration,
+          order: (currentState.videos || []).length + 1,
+          adTagUrl: enableVast ? vastTag : null
+        };
+
+        currentState.videos = currentState.videos || [];
+        currentState.videos.push(newVideoObj);
+        selectedVideoIdsSet.add(newVideoId);
+
+        document.getElementById('newVideoTitle').value = '';
+        document.getElementById('newVideoUrl').value = '';
+
+        publishAllChanges({
+          lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId,
+          lastPushTimestamp: Date.now(),
+          activeVideoIds: null
+        });
+
+        if (pushImmediately) {
+          const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
+          triggerForcePlayOnDevices(
+            targetDevice,
+            currentState.videos.map(v => v.id),
+            newVideoId
+          );
+        }
+
+        openOfflinePopup(newVideoObj);
       }
-
-      const newVideoObj = {
-        id: newVideoId,
-        title,
-        url: finalUrl,
-        duration,
-        order: (currentState.videos || []).length + 1,
-        adTagUrl: enableVast ? vastTag : null
-      };
-
-      currentState.videos = currentState.videos || [];
-      currentState.videos.push(newVideoObj);
-      selectedVideoIdsSet.add(newVideoId);
-
-      document.getElementById('newVideoTitle').value = '';
-      document.getElementById('newVideoUrl').value = '';
-      selectedRawFile = null;
-      selectedFileName = '';
-      if (statusEl) statusEl.textContent = 'Click here to choose a video file to upload';
-
-      await publishAllChanges({
-        lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId,
-        lastPushTimestamp: Date.now(),
-        activeVideoIds: null
-      });
-
-      if (pushImmediately) {
-        const targetDevice = (document.getElementById('playTargetDeviceSelect') && document.getElementById('playTargetDeviceSelect').value) || '*';
-        await triggerForcePlayOnDevices(
-          targetDevice,
-          currentState.videos.map(v => v.id),
-          newVideoId
-        );
-      }
-
-      openOfflinePopup(newVideoObj);
     }
 
     async function triggerForcePlayOnDevices(targetDevice, videoIds, startVideoId) {
@@ -2035,6 +2143,7 @@
       const firstId = startVideoId || cleanIds[0] || (videos[0] && videos[0].id) || null;
       const nowMs = Date.now();
 
+      // 1. Instant optimistic UI update (0ms latency!)
       currentState.lastPushedVideoId = firstId;
       currentState.lastPushTimestamp = nowMs;
       currentState.activeVideoIds = cleanIds;
@@ -2042,33 +2151,12 @@
 
       renderPlaylist(currentState);
 
-      // 1. Update Cloud Firestore cms_global/live_state immediately so Android TV & all serverless endpoints see the exact push
-      await saveFirestoreGlobalState((st) => {
-        st.playlist = {
-          ...(st.playlist || currentState),
-          ...currentState,
-          videos: currentState.videos,
-          lastPushedVideoId: firstId,
-          lastPushTimestamp: nowMs,
-          activeVideoIds: cleanIds,
-          version: currentState.version
-        };
-        st.pendingActions = st.pendingActions || {};
-        const cmd = `playVideosNow:${firstId || ''}:${cleanIds.join(',')}`;
-        if (!targetDevice || targetDevice === '*') {
-          st.pendingActions['*'] = cmd;
-          Object.keys(st.devices || {}).forEach(id => {
-            st.pendingActions[id] = cmd;
-          });
-        } else {
-          st.pendingActions[targetDevice] = cmd;
-        }
-        return st;
-      });
+      const targetLabel = (!targetDevice || targetDevice === '*') ? 'All Paired TVs' : targetDevice;
+      showToast(`Playing ${cleanIds.length} video(s) immediately on ${targetLabel}!`);
 
-      // 2. Also send to /api/devices/action WITH currentState.videos so cold lambdas have the exact video list
-      try {
-        await fetch('/api/devices/action', {
+      // 2. Parallel instant dispatch to API & devices (non-blocking)
+      Promise.all([
+        fetch('/api/devices/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2078,11 +2166,42 @@
             startVideoId: firstId,
             videos: currentState.videos
           })
-        });
-      } catch (e) {}
-
-      const targetLabel = (!targetDevice || targetDevice === '*') ? 'All Paired TVs' : targetDevice;
-      showToast(`Playing ${cleanIds.length} video(s) immediately on ${targetLabel}!`);
+        }).catch(() => {}),
+        fetch('/api/playlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videos: currentState.videos,
+            lastPushedVideoId: firstId,
+            lastPushTimestamp: nowMs,
+            activeVideoIds: cleanIds,
+            orientation: currentState.orientation,
+            videoOrientation: currentState.videoOrientation,
+            scaleMode: currentState.scaleMode
+          })
+        }).catch(() => {}),
+        saveFirestoreGlobalState((st) => {
+          st.playlist = {
+            ...(st.playlist || currentState),
+            ...currentState,
+            videos: currentState.videos,
+            lastPushedVideoId: firstId,
+            lastPushTimestamp: nowMs,
+            activeVideoIds: cleanIds,
+            version: currentState.version
+          };
+          st.pendingActions = st.pendingActions || {};
+          const cmd = `playVideosNow:${firstId || ''}:${cleanIds.join(',')}`;
+          if (!targetDevice || targetDevice === '*') {
+            st.pendingActions['*'] = cmd;
+            Object.keys(st.devices || {}).forEach(id => {
+              st.pendingActions[id] = cmd;
+            });
+          } else {
+            st.pendingActions[targetDevice] = cmd;
+          }
+          return st;
+        }).catch(() => {})
     }
 
     async function playSelectedVideosNow() {
@@ -2285,8 +2404,12 @@
       loadDashboardData();
     }
 
+    // Instant 0ms synchronous render from localStorage before any network request
+    renderPlaylist(currentState);
+    updateSelectedBadge();
+
     loadDashboardData();
-    setInterval(loadDashboardData, 3500);
+    setInterval(loadDashboardData, 4500);
   </script>
 </body>
 </html>

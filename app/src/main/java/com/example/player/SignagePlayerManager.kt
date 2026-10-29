@@ -12,7 +12,6 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.ima.ImaAdsLoader
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -27,7 +26,6 @@ import java.io.File
 class SignagePlayerManager(private val context: Context) {
 
     private var exoPlayer: ExoPlayer? = null
-    private var imaAdsLoader: ImaAdsLoader? = null
     private var playerView: PlayerView? = null
     private var hostActivity: Activity? = null
 
@@ -61,19 +59,8 @@ class SignagePlayerManager(private val context: Context) {
         this.playerView = view
         this.hostActivity = activity
 
-        imaAdsLoader = ImaAdsLoader.Builder(context)
-            .setAdErrorListener { adErrorEvent ->
-                Log.d(TAG, "IMA Ad Notice: ${adErrorEvent.error?.message}")
-            }
-            .setAdEventListener { adEvent ->
-                Log.d(TAG, "IMA Ad Event: ${adEvent.type}")
-                _isAdPlaying.value = exoPlayer?.isPlayingAd == true
-            }
-            .build()
-
         val dataSourceFactory = ResilientSignageDataSource.Factory(context)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-            .setLocalAdInsertionComponents({ imaAdsLoader }, view)
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -147,7 +134,6 @@ class SignagePlayerManager(private val context: Context) {
 
         this.exoPlayer = player
         view.player = player
-        imaAdsLoader?.setPlayer(player)
 
         if (currentPlaylistItems.isNotEmpty()) {
             loadPlaylist(currentPlaylistItems, forceReload = true)
@@ -155,7 +141,7 @@ class SignagePlayerManager(private val context: Context) {
     }
 
     /**
-     * Loads playlist into ExoPlayer using ConcatenatingMediaSource with Google IMA VAST ads
+     * Loads playlist into ExoPlayer using ConcatenatingMediaSource
      * and REPEAT_MODE_ALL for gapless looping playback. Supports jumping directly to a pushed video.
      */
     fun loadPlaylist(
@@ -167,11 +153,10 @@ class SignagePlayerManager(private val context: Context) {
         val signature = items.joinToString("|") { "${it.id}:${it.videoUrl}:${it.localFilePath ?: ""}" }
         val player = exoPlayer
         val view = playerView
-        val adsLoader = imaAdsLoader
 
         this.currentPlaylistItems = items
 
-        if (player == null || view == null || adsLoader == null) return
+        if (player == null || view == null) return
 
         // If only startVideoId changed and playlist items are identical, just jump to that video
         if (!forceReload && signature == lastLoadedSignature && player.mediaItemCount == items.size) {
@@ -183,24 +168,14 @@ class SignagePlayerManager(private val context: Context) {
         lastLoadedSignature = signature
 
         val mediaSourceFactory = DefaultMediaSourceFactory(ResilientSignageDataSource.Factory(context))
-            .setLocalAdInsertionComponents({ adsLoader }, view)
-
         val concatenatingMediaSource = ConcatenatingMediaSource()
 
         for (item in items) {
             val uri = resolveUri(item)
-            val mediaItemBuilder = MediaItem.Builder()
+            val mediaItem = MediaItem.Builder()
                 .setUri(uri)
                 .setMediaId(item.id)
-
-            if (!item.adTagUrl.isNullOrBlank()) {
-                val adTagUri = Uri.parse(item.adTagUrl)
-                mediaItemBuilder.setAdsConfiguration(
-                    MediaItem.AdsConfiguration.Builder(adTagUri).build()
-                )
-            }
-
-            val mediaItem = mediaItemBuilder.build()
+                .build()
             val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
             concatenatingMediaSource.addMediaSource(mediaSource)
         }
@@ -358,14 +333,6 @@ class SignagePlayerManager(private val context: Context) {
     }
 
     fun release() {
-        try {
-            imaAdsLoader?.setPlayer(null)
-            imaAdsLoader?.release()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error releasing IMA: ${e.message}")
-        }
-        imaAdsLoader = null
-
         exoPlayer?.stop()
         exoPlayer?.release()
         exoPlayer = null

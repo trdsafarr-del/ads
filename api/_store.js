@@ -100,18 +100,19 @@ const DEFAULT_STATE = {
   uploadedVideos: {}
 };
 
+const MOCK_VIDEO_IDS = new Set(['vid_bunny', 'vid_dream', 'vid_blazes', 'vid_bullrun']);
+
 function sanitizeUrl(url, index, videoId, uploadedVideos) {
-  const s = String(url || '');
+  const s = String(url || '').trim();
   if (!s || s.includes('commondatastorage.googleapis.com/gtv-videos-bucket')) {
     return RELIABLE_URLS[index % RELIABLE_URLS.length];
   }
-  // If a previous upload used tmpfiles.org (which blocks HTML5 <video> & ExoPlayer),
-  // route to our own /api/upload endpoint if chunks exist, or a working MP4 stream.
+  // If it's a tmpfiles.org link, convert to direct download / stream link if needed
   if (s.includes('tmpfiles.org')) {
-    if (videoId && uploadedVideos && uploadedVideos[videoId] && uploadedVideos[videoId].totalChunks) {
-      return `https://ads-broo.vercel.app/api/upload?id=${videoId}`;
+    if (s.includes('tmpfiles.org/dl/')) {
+      return s;
     }
-    return RELIABLE_URLS[index % RELIABLE_URLS.length];
+    return s.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
   }
   return s;
 }
@@ -137,7 +138,12 @@ function normalizeParsedState(parsed) {
       ...((parsed && parsed.uploadedVideos) || {})
     }
   };
-  if (Array.isArray(merged.playlist.videos)) {
+  if (Array.isArray(parsed && parsed.playlist && parsed.playlist.videos)) {
+    merged.playlist.videos = parsed.playlist.videos.map((v, idx) => ({
+      ...v,
+      url: sanitizeUrl(v.url, idx, v.id, merged.uploadedVideos)
+    }));
+  } else if (Array.isArray(merged.playlist.videos)) {
     merged.playlist.videos = merged.playlist.videos.map((v, idx) => ({
       ...v,
       url: sanitizeUrl(v.url, idx, v.id, merged.uploadedVideos)
@@ -183,8 +189,19 @@ async function loadStateAsync() {
       if (rawJson) {
         const remoteState = normalizeParsedState(JSON.parse(rawJson));
         remoteState.updatedAtMs = remoteUpdatedMs || remoteState.updatedAtMs || 0;
+        const localVideos = (localState.playlist && localState.playlist.videos) || [];
+        const remoteVideos = (remoteState.playlist && remoteState.playlist.videos) || [];
+        const localHasCustom = localVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.has(v.id));
+        const remoteHasCustom = remoteVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.has(v.id));
+
+        // If local disk has custom user videos and remote doc only has default mock videos, protect user videos!
+        if (localHasCustom && !remoteHasCustom) {
+          return localState;
+        }
+
         const localVer = Number(localState.playlist && localState.playlist.version) || 1;
         const remoteVer = Number(remoteState.playlist && remoteState.playlist.version) || 1;
+
         if (
           remoteVer >= localVer ||
           remoteUpdatedMs >= (Number(localState.updatedAtMs) || 0)
@@ -229,7 +246,7 @@ async function saveStateAsync(state) {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 1500);
     await fetch(FIRESTORE_STATE_DOC_URL, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

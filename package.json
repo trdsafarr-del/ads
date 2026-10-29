@@ -4,6 +4,7 @@
   "private": true,
   "description": "SignageTV Cloud CMS Dashboard & Serverless API for https://ads-broo.vercel.app/",
   "scripts": {
+    "start": "node server.js",
     "build": "echo 'Static public/ and Serverless api/ ready for Vercel'"
   }
 }
