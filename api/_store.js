@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const STATE_FILE = path.join('/tmp', 'signage_cms_state_v5.json');
-const UPLOAD_DIR = path.join('/tmp', 'signage_uploads');
+const STATE_FILE = path.join('/tmp', 'signage_cms_state_v6.json');
+const UPLOAD_DIR = path.join('/tmp', 'videos');
 
 const FIRESTORE_PROJECT_ID = 'gen-lang-client-0563270290';
 const FIRESTORE_DATABASE_ID = 'ai-studio-android-signaget-4a0ce43d-8b5a-43d1-8423-f48d2b432ace';
@@ -52,47 +52,10 @@ const DEFAULT_STATE = {
       {
         startTime: '00:00',
         endTime: '23:59',
-        videoIds: ['vid_bunny', 'vid_dream', 'vid_blazes', 'vid_bullrun']
+        videoIds: []
       }
     ],
-    videos: [
-      {
-        id: 'vid_bunny',
-        title: 'Brand Showcase: Nature & Animation',
-        url: RELIABLE_URLS[0],
-        order: 1,
-        duration: 60,
-        checksum: null,
-        adTagUrl: null
-      },
-      {
-        id: 'vid_dream',
-        title: 'Digital Arts & 3D Render Feature',
-        url: RELIABLE_URLS[1],
-        order: 2,
-        duration: 45,
-        checksum: null,
-        adTagUrl: null
-      },
-      {
-        id: 'vid_blazes',
-        title: 'High Energy Automotive Commercial',
-        url: RELIABLE_URLS[2],
-        order: 3,
-        duration: 30,
-        checksum: null,
-        adTagUrl: null
-      },
-      {
-        id: 'vid_bullrun',
-        title: 'Summer Road Trip Experience',
-        url: RELIABLE_URLS[3],
-        order: 4,
-        duration: 40,
-        checksum: null,
-        adTagUrl: null
-      }
-    ]
+    videos: []
   },
   approvedCodes: {},
   devices: {},
@@ -100,7 +63,7 @@ const DEFAULT_STATE = {
   uploadedVideos: {}
 };
 
-const MOCK_VIDEO_IDS = new Set(['vid_bunny', 'vid_dream', 'vid_blazes', 'vid_bullrun']);
+const MOCK_VIDEO_IDS = new Set([]);
 
 function sanitizeUrl(url, index, videoId, uploadedVideos) {
   const s = String(url || '').trim();
