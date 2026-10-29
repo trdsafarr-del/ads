@@ -10,10 +10,18 @@ module.exports = async (req, res) => {
   state.approvedCodes = state.approvedCodes || {};
   state.devices = state.devices || {};
 
+  const cleanApprovedCodes = {};
+  Object.entries(state.approvedCodes || {}).forEach(([k, v]) => {
+    const cleanK = String(k).replace(/[^0-9]/g, '').trim();
+    if (cleanK) cleanApprovedCodes[cleanK] = v;
+  });
+
   if (req.method === 'GET') {
-    const pairedDevices = Object.values(state.devices).filter(
-      (d) => d && d.paired === true && d.pairingCode && state.approvedCodes[d.pairingCode]
-    );
+    const pairedDevices = Object.values(state.devices).filter((d) => {
+      if (!d) return false;
+      const dCode = d.pairingCode ? String(d.pairingCode).replace(/[^0-9]/g, '').trim() : '';
+      return d.paired === true || (dCode && cleanApprovedCodes[dCode]);
+    });
     return res.status(200).json({
       autoApprovePairing: false,
       approvedCodes: state.approvedCodes,
@@ -25,10 +33,13 @@ module.exports = async (req, res) => {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
 
     if (body.action === 'approveCode' && body.pairingCode) {
-      const code = String(body.pairingCode).trim();
+      const code = String(body.pairingCode).replace(/[^0-9]/g, '').trim();
+      if (!code || code.length !== 6) {
+        return res.status(400).json({ success: false, error: 'Pairing code must be 6 digits' });
+      }
       state.approvedCodes[code] = {
         pairingCode: code,
-        deviceName: body.deviceName || `TV Screen (${code})`,
+        deviceName: body.deviceName || `SignageTV (${code})`,
         approvedAt: Date.now()
       };
       await saveStateAsync(state);
@@ -41,10 +52,12 @@ module.exports = async (req, res) => {
 
     if (body.action === 'unpairDevice') {
       const targetDeviceId = body.deviceId;
-      const targetCode = body.pairingCode ? String(body.pairingCode).trim() : null;
+      const targetCode = body.pairingCode ? String(body.pairingCode).replace(/[^0-9]/g, '').trim() : null;
 
       if (targetDeviceId && state.devices[targetDeviceId]) {
-        const existingCode = state.devices[targetDeviceId].pairingCode;
+        const existingCode = state.devices[targetDeviceId].pairingCode
+          ? String(state.devices[targetDeviceId].pairingCode).replace(/[^0-9]/g, '').trim()
+          : null;
         if (existingCode && state.approvedCodes[existingCode]) {
           delete state.approvedCodes[existingCode];
         }
@@ -69,8 +82,8 @@ module.exports = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing deviceId or pairingCode' });
     }
 
-    const codeStr = String(pairingCode).trim();
-    const approvedEntry = state.approvedCodes[codeStr];
+    const codeStr = String(pairingCode).replace(/[^0-9]/g, '').trim();
+    const approvedEntry = cleanApprovedCodes[codeStr] || state.approvedCodes[codeStr];
     const isApproved = Boolean(approvedEntry);
 
     if (!isApproved) {

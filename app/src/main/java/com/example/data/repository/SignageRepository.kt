@@ -845,7 +845,7 @@ class SignageRepository(private val context: Context) {
         if (pairingManager.isPaired()) return@withContext true
         try {
             val api = createRetrofit(localStore.getApiServerUrl(), fastPoll = true)
-            val myCode = pairingManager.getPairingCode().trim()
+            val myCode = pairingManager.getPairingCode().trim().filter { it.isDigit() }
             val myDeviceId = pairingManager.getDeviceId()
 
             // Step 1: Check both API and Cloud Firestore cms_global/live_state for approvedCodes[myCode]
@@ -855,10 +855,28 @@ class SignageRepository(private val context: Context) {
                 null
             }
             val statusBody = statusResponse?.body()
-            val apiApprovedEntry = statusBody?.approvedCodes?.get(myCode)
+            val apiApprovedEntry = statusBody?.approvedCodes?.entries?.firstOrNull {
+                it.key.filter { c -> c.isDigit() } == myCode
+            }?.value
 
             val fsRoot = fetchFirestoreCmsRootJson()
-            val fsApprovedObj = fsRoot?.optJSONObject("approvedCodes")?.optJSONObject(myCode)
+            val fsApprovedCodes = fsRoot?.optJSONObject("approvedCodes")
+            val fsApprovedObj = fsApprovedCodes?.let { codes ->
+                if (codes.has(myCode)) {
+                    codes.optJSONObject(myCode)
+                } else {
+                    var match: JSONObject? = null
+                    val keys = codes.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        if (k.filter { it.isDigit() } == myCode) {
+                            match = codes.optJSONObject(k)
+                            break
+                        }
+                    }
+                    match
+                }
+            }
             val fsDeviceName = fsApprovedObj?.optString("deviceName", "")?.takeIf { it.isNotBlank() }
 
             if (apiApprovedEntry == null && fsApprovedObj == null) {
@@ -885,6 +903,24 @@ class SignageRepository(private val context: Context) {
                 ?: apiApprovedEntry?.deviceName
                 ?: fsDeviceName
                 ?: "SignageTV (${myDeviceId.takeLast(4)})"
+
+            // Dispatch immediate heartbeat so server has device in active list
+            try {
+                api.sendHeartbeat(
+                    HeartbeatRequest(
+                        deviceId = myDeviceId,
+                        pairingCode = myCode,
+                        status = "PLAYING",
+                        currentVideoId = null,
+                        storageUsed = localStore.getCachedStorageSizeBytes(),
+                        appVersion = "1.0",
+                        lastSyncTime = System.currentTimeMillis(),
+                        screenOrientation = localStore.getDisplayOrientation(),
+                        videoOrientation = localStore.getVideoOrientation(),
+                        scaleMode = localStore.getVideoScaleMode()
+                    )
+                )
+            } catch (_: Exception) {}
 
             if (fsRoot != null) {
                 try {
@@ -1426,7 +1462,7 @@ class SignageRepository(private val context: Context) {
                         title = "Brand Showcase: Nature & Animation",
                         videoUrl = RELIABLE_SAMPLE_VIDEOS[0],
                         durationSeconds = 60,
-                        adTagUrl = null,
+                        adTagUrl = SAMPLE_VAST_TAG,
                         order = 1,
                         isOfflineDownloaded = false
                     ),

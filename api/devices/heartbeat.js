@@ -10,10 +10,18 @@ module.exports = async (req, res) => {
   state.devices = state.devices || {};
   state.approvedCodes = state.approvedCodes || {};
 
+  const cleanApprovedCodes = {};
+  Object.entries(state.approvedCodes || {}).forEach(([k, v]) => {
+    const cleanK = String(k).replace(/[^0-9]/g, '').trim();
+    if (cleanK) cleanApprovedCodes[cleanK] = v;
+  });
+
   if (req.method === 'GET') {
-    const pairedDevices = Object.values(state.devices).filter(
-      (d) => d && d.paired === true && d.pairingCode && state.approvedCodes[d.pairingCode]
-    );
+    const pairedDevices = Object.values(state.devices).filter((d) => {
+      if (!d) return false;
+      const dCode = d.pairingCode ? String(d.pairingCode).replace(/[^0-9]/g, '').trim() : '';
+      return d.paired === true || (dCode && cleanApprovedCodes[dCode]);
+    });
     return res.status(200).json({
       devices: pairedDevices,
       queuedActions: state.queuedActions || {},
@@ -41,20 +49,24 @@ module.exports = async (req, res) => {
     }
 
     const existing = state.devices[deviceId];
-    const codeStr = pairingCode ? String(pairingCode).trim() : (existing && existing.pairingCode);
-    const isGenuinelyPaired = Boolean(codeStr && state.approvedCodes[codeStr]);
+    const codeStr = pairingCode
+      ? String(pairingCode).replace(/[^0-9]/g, '').trim()
+      : (existing && existing.pairingCode ? String(existing.pairingCode).replace(/[^0-9]/g, '').trim() : '');
+    const isGenuinelyPaired = Boolean((codeStr && cleanApprovedCodes[codeStr]) || (existing && existing.paired === true));
 
     let stateChanged = false;
 
     if (isGenuinelyPaired) {
+      const resolvedName =
+        (codeStr && cleanApprovedCodes[codeStr] && cleanApprovedCodes[codeStr].deviceName) ||
+        (existing && existing.deviceName) ||
+        `SignageTV (${deviceId.slice(-4)})`;
+
       state.devices[deviceId] = {
         ...(existing || {}),
         deviceId,
         pairingCode: codeStr,
-        deviceName:
-          (state.approvedCodes[codeStr] && state.approvedCodes[codeStr].deviceName) ||
-          (existing && existing.deviceName) ||
-          `SignageTV (${deviceId.slice(-4)})`,
+        deviceName: resolvedName,
         status: status || 'PLAYING',
         currentVideoId: currentVideoId || null,
         storageUsed: Number(storageUsed) || 0,

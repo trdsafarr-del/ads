@@ -1528,14 +1528,33 @@
           ensureLocalVideoPreviewBlob(v);
         });
 
-        // Merge devices & approvedCodes from both API and Firestore so no paired TV is ever lost across serverless instances
+        // Merge devices & approvedCodes from API, Firestore, and localStorage so no paired TV is ever lost
+        let localSavedCodes = {};
+        try {
+          localSavedCodes = JSON.parse(localStorage.getItem('signagetv_approved_codes_v1') || '{}');
+        } catch (e) {}
+
         const mergedApproved = {
+          ...localSavedCodes,
           ...((pairData && pairData.approvedCodes) || {}),
-          ...((fsState && fsState.approvedCodes) || {})
+          ...((fsState && fsState.approvedCodes) || {}),
+          ...((currentDevicesState && currentDevicesState.approvedCodes) || {})
         };
+        try {
+          localStorage.setItem('signagetv_approved_codes_v1', JSON.stringify(mergedApproved));
+        } catch (e) {}
+
         const devicesMap = {};
-        ((pairData && pairData.devices) || []).forEach(d => {
+        (currentDevicesState.devices || []).forEach(d => {
           if (d && d.deviceId) devicesMap[d.deviceId] = d;
+        });
+        ((pairData && pairData.devices) || []).forEach(d => {
+          if (d && d.deviceId) {
+            const prev = devicesMap[d.deviceId];
+            if (!prev || (d.lastSeen || 0) >= (prev.lastSeen || 0)) {
+              devicesMap[d.deviceId] = d;
+            }
+          }
         });
         Object.values((fsState && fsState.devices) || {}).forEach(d => {
           if (d && d.deviceId) {
@@ -1716,8 +1735,14 @@
     }
 
     function renderDevices(devices, approvedCodes = {}) {
+      const cleanApproved = {};
+      Object.entries(approvedCodes || {}).forEach(([k, v]) => {
+        const cleanK = String(k).replace(/[^0-9]/g, '').trim();
+        if (cleanK) cleanApproved[cleanK] = v;
+      });
+
       const verifiedDevices = (devices || []).filter(
-        d => d && d.paired === true && d.pairingCode && approvedCodes[d.pairingCode]
+        d => d && (d.paired === true || (d.pairingCode && cleanApproved[String(d.pairingCode).replace(/[^0-9]/g, '').trim()]))
       );
 
       document.getElementById('statDevices').textContent = verifiedDevices.length;
@@ -1727,7 +1752,7 @@
         const prevVal = targetSelect.value || '*';
         targetSelect.innerHTML = `<option value="*">All Paired TVs (${verifiedDevices.length} Connected)</option>` +
           verifiedDevices.map(d =>
-            `<option value="${d.deviceId}">${d.deviceName || d.deviceId} (Code: ${d.pairingCode})</option>`
+            `<option value="${d.deviceId}">${d.deviceName || d.deviceId} (Code: ${d.pairingCode || 'Paired'})</option>`
           ).join('');
         if (prevVal === '*' || verifiedDevices.some(d => d.deviceId === prevVal)) {
           targetSelect.value = prevVal;
@@ -1735,7 +1760,7 @@
       }
 
       const codesBox = document.getElementById('approvedCodesListContainer');
-      const codeEntries = Object.values(approvedCodes || {});
+      const codeEntries = Object.values(cleanApproved || {});
       if (codesBox) {
         if (!codeEntries.length) {
           codesBox.innerHTML = `<div style="font-size:11px; color:var(--muted);">No 6-digit code approved yet. Enter the 6-digit code shown on your Android TV above and click <strong>Pair TV Now</strong>.</div>`;
@@ -2390,52 +2415,110 @@
     }
 
     async function approvePairingCode() {
-      const code = document.getElementById('pairCodeInput').value.trim();
-      const deviceName = document.getElementById('pairDeviceName').value.trim();
+      const rawCode = document.getElementById('pairCodeInput').value;
+      const code = String(rawCode || '').replace(/[^0-9]/g, '').trim();
+      const rawName = document.getElementById('pairDeviceName').value.trim();
+      const deviceName = rawName || `SignageTV (${code})`;
+
       if (!code || code.length !== 6) {
-        showToast('Please enter the 6-digit Device Pair Code from your Android TV');
+        showToast('Please enter the 6-digit Device Pair Code (e.g. 482910) shown on your Android TV');
         return;
       }
 
-      await saveFirestoreGlobalState((st) => {
-        st.approvedCodes = st.approvedCodes || {};
-        st.approvedCodes[code] = {
-          pairingCode: code,
-          deviceName: deviceName || `SignageTV (${code})`,
-          approvedAt: Date.now()
-        };
-        return st;
-      });
-
-      await fetch('/api/devices/pair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'approveCode', pairingCode: code, deviceName })
-      }).catch(() => {});
+      // 1. Optimistic 0ms UI update so user immediately sees approved code
+      currentDevicesState.approvedCodes = currentDevicesState.approvedCodes || {};
+      currentDevicesState.approvedCodes[code] = {
+        pairingCode: code,
+        deviceName: deviceName,
+        approvedAt: Date.now()
+      };
+      try {
+        localStorage.setItem('signagetv_approved_codes_v1', JSON.stringify(currentDevicesState.approvedCodes));
+      } catch (e) {}
 
       document.getElementById('pairCodeInput').value = '';
-      showToast('6-Digit TV Code ' + code + ' Approved! Android TV will pair within 2.5 seconds.');
-      loadDashboardData();
+      document.getElementById('pairDeviceName').value = '';
+
+      renderDevices(currentDevicesState.devices, currentDevicesState.approvedCodes);
+      showToast('✔ Code ' + code + ' Approved! Android TV will pair automatically within 2.5 seconds.');
+
+      // 2. Parallel dispatch to local API, remote Vercel API, and Cloud Firestore
+      const pairPayload = JSON.stringify({ action: 'approveCode', pairingCode: code, deviceName });
+      const apiPromises = [
+        fetch('/api/devices/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: pairPayload
+        }).catch(() => {})
+      ];
+
+      if (!window.location.origin.includes('ads-broo.vercel.app')) {
+        apiPromises.push(
+          fetch('https://ads-broo.vercel.app/api/devices/pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: pairPayload
+          }).catch(() => {})
+        );
+      }
+
+      apiPromises.push(
+        saveFirestoreGlobalState((st) => {
+          st.approvedCodes = st.approvedCodes || {};
+          st.approvedCodes[code] = {
+            pairingCode: code,
+            deviceName: deviceName,
+            approvedAt: Date.now()
+          };
+          return st;
+        }).catch(() => {})
+      );
+
+      await Promise.all(apiPromises);
+      setTimeout(loadDashboardData, 1000);
+      setTimeout(loadDashboardData, 3000);
     }
 
     async function unpairDeviceByCode(pairingCode, deviceId) {
-      await saveFirestoreGlobalState((st) => {
-        if (pairingCode && st.approvedCodes) {
-          delete st.approvedCodes[pairingCode];
-        }
-        if (deviceId && st.devices) {
-          delete st.devices[deviceId];
-        }
-        return st;
-      });
-
-      await fetch('/api/devices/pair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'unpairDevice', pairingCode, deviceId })
-      }).catch(() => {});
+      const code = String(pairingCode || '').replace(/[^0-9]/g, '').trim();
+      if (code && currentDevicesState.approvedCodes) {
+        delete currentDevicesState.approvedCodes[code];
+        try {
+          localStorage.setItem('signagetv_approved_codes_v1', JSON.stringify(currentDevicesState.approvedCodes));
+        } catch (e) {}
+      }
+      if (deviceId) {
+        currentDevicesState.devices = (currentDevicesState.devices || []).filter(d => d.deviceId !== deviceId);
+      }
+      renderDevices(currentDevicesState.devices, currentDevicesState.approvedCodes);
       showToast('Device unpaired & removed!');
-      loadDashboardData();
+
+      const unpairPayload = JSON.stringify({ action: 'unpairDevice', pairingCode: code, deviceId });
+      const apiPromises = [
+        fetch('/api/devices/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: unpairPayload
+        }).catch(() => {}),
+        saveFirestoreGlobalState((st) => {
+          if (code && st.approvedCodes) delete st.approvedCodes[code];
+          if (deviceId && st.devices) delete st.devices[deviceId];
+          return st;
+        }).catch(() => {})
+      ];
+
+      if (!window.location.origin.includes('ads-broo.vercel.app')) {
+        apiPromises.push(
+          fetch('https://ads-broo.vercel.app/api/devices/pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: unpairPayload
+          }).catch(() => {})
+        );
+      }
+
+      await Promise.all(apiPromises);
+      setTimeout(loadDashboardData, 1200);
     }
 
     async function sendRemoteCommand(action) {

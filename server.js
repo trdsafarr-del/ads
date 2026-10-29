@@ -6,14 +6,27 @@ const url = require('url');
 const PORT = process.env.APP_PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-const API_HANDLERS = {
-  '/api/playlist': require('./api/playlist'),
-  '/api/devices/action': require('./api/devices/action'),
-  '/api/devices/heartbeat': require('./api/devices/heartbeat'),
-  '/api/devices/pair': require('./api/devices/pair'),
-  '/api/upload': require('./api/upload'),
-  '/api/updates/check': require('./api/updates/check')
-};
+function getApiHandler(pathname) {
+  const handlerMap = {
+    '/api/playlist': './api/playlist',
+    '/api/devices/action': './api/devices/action',
+    '/api/devices/heartbeat': './api/devices/heartbeat',
+    '/api/devices/pair': './api/devices/pair',
+    '/api/upload': './api/upload',
+    '/api/updates/check': './api/updates/check'
+  };
+  const modPath = handlerMap[pathname];
+  if (!modPath) return null;
+  try {
+    const resolvedMod = require.resolve(modPath);
+    delete require.cache[resolvedMod];
+    const resolvedStore = require.resolve('./api/_store');
+    delete require.cache[resolvedStore];
+    return require(modPath);
+  } catch (e) {
+    return require(modPath);
+  }
+}
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -55,7 +68,7 @@ const server = http.createServer(async (req, res) => {
   req.query = parsedUrl.query || {};
 
   // Check if it's an API route
-  const apiHandler = API_HANDLERS[pathname];
+  const apiHandler = getApiHandler(pathname);
   if (apiHandler) {
     ensureResponseHelpers(res);
 

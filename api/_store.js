@@ -189,28 +189,59 @@ async function loadStateAsync() {
       if (rawJson) {
         const remoteState = normalizeParsedState(JSON.parse(rawJson));
         remoteState.updatedAtMs = remoteUpdatedMs || remoteState.updatedAtMs || 0;
+
+        // Bi-directional merge of approved pairing codes so no code approved anywhere is ever lost
+        const mergedApprovedCodes = {
+          ...(remoteState.approvedCodes || {}),
+          ...(localState.approvedCodes || {})
+        };
+
+        // Merge paired devices, keeping the most recently seen entry
+        const mergedDevices = { ...(remoteState.devices || {}) };
+        Object.entries(localState.devices || {}).forEach(([id, dev]) => {
+          if (!mergedDevices[id] || (dev.lastSeen || 0) >= (mergedDevices[id].lastSeen || 0)) {
+            mergedDevices[id] = dev;
+          }
+        });
+
+        // Merge queuedActions
+        const mergedQueuedActions = {
+          ...(remoteState.queuedActions || {}),
+          ...(localState.queuedActions || {})
+        };
+
         const localVideos = (localState.playlist && localState.playlist.videos) || [];
         const remoteVideos = (remoteState.playlist && remoteState.playlist.videos) || [];
         const localHasCustom = localVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.has(v.id));
         const remoteHasCustom = remoteVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.has(v.id));
 
-        // If local disk has custom user videos and remote doc only has default mock videos, protect user videos!
-        if (localHasCustom && !remoteHasCustom) {
-          return localState;
-        }
-
         const localVer = Number(localState.playlist && localState.playlist.version) || 1;
         const remoteVer = Number(remoteState.playlist && remoteState.playlist.version) || 1;
 
-        if (
+        let activePlaylist = localState.playlist;
+        if (localHasCustom && !remoteHasCustom) {
+          activePlaylist = localState.playlist;
+        } else if (
           remoteVer >= localVer ||
           remoteUpdatedMs >= (Number(localState.updatedAtMs) || 0)
         ) {
-          try {
-            fs.writeFileSync(STATE_FILE, JSON.stringify(remoteState, null, 2), 'utf8');
-          } catch (e) {}
-          return remoteState;
+          activePlaylist = remoteState.playlist;
         }
+
+        const finalMergedState = {
+          ...remoteState,
+          ...localState,
+          playlist: activePlaylist,
+          approvedCodes: mergedApprovedCodes,
+          devices: mergedDevices,
+          queuedActions: mergedQueuedActions,
+          updatedAtMs: Math.max(Number(localState.updatedAtMs) || 0, remoteUpdatedMs || 0)
+        };
+
+        try {
+          fs.writeFileSync(STATE_FILE, JSON.stringify(finalMergedState, null, 2), 'utf8');
+        } catch (e) {}
+        return finalMergedState;
       }
     }
   } catch (e) {}
