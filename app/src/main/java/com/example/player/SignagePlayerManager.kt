@@ -69,6 +69,14 @@ class SignagePlayerManager(private val context: Context) {
         this.playerView = view
         this.hostActivity = activity
 
+        if (this.exoPlayer != null) {
+            view.player = this.exoPlayer
+            if (currentPlaylistItems.isNotEmpty() && this.exoPlayer?.mediaItemCount == 0) {
+                loadPlaylist(currentPlaylistItems, forceReload = true)
+            }
+            return
+        }
+
         val dataSourceFactory = ResilientSignageDataSource.Factory(context)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 

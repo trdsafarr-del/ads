@@ -114,7 +114,7 @@ fun SignageScreen(
         if (uiState.isPaired && playlist.items.isNotEmpty()) {
             playerManager.loadPlaylist(
                 items = playlist.items,
-                startVideoId = uiState.pushedVideoIdToAutoPlay ?: playlist.lastPushedVideoId
+                startVideoId = uiState.pushedVideoIdToAutoPlay
             )
             playerManager.play()
         } else if (!uiState.isPaired) {
