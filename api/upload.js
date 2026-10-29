@@ -82,10 +82,53 @@ async function mirrorBufferToPublicCdn(buffer, filename) {
   return null;
 }
 
+function streamFileWithRange(req, res, filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    const totalSize = stat.size;
+    const range = req.headers.range;
+
+    setCors(res);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10) || 0;
+      const end = parts[1] ? Math.min(parseInt(parts[1], 10), totalSize - 1) : totalSize - 1;
+      const chunkSize = Math.max(0, end - start + 1);
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+        'Content-Length': chunkSize,
+        'Content-Type': 'video/mp4'
+      });
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': totalSize,
+        'Content-Type': 'video/mp4'
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (e) {
+    if (!res.headersSent) {
+      if (res.status) {
+        res.status(500).json({ error: e.message || 'Stream error' });
+      } else {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: e.message || 'Stream error' }));
+      }
+    }
+  }
+}
+
 function streamBufferWithRange(req, res, buffer) {
   const fileSize = buffer.length;
   const range = req.headers.range;
 
+  setCors(res);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -131,13 +174,7 @@ module.exports = async (req, res) => {
     const filePath = path.join(UPLOAD_DIR, `${videoId}.mp4`);
     // 1. Stream directly from local /tmp file if present on this instance
     if (fs.existsSync(filePath)) {
-      try {
-        const stat = fs.statSync(filePath);
-        if (stat.size > 0) {
-          const buffer = fs.readFileSync(filePath);
-          return streamBufferWithRange(req, res, buffer);
-        }
-      } catch (e) {}
+      return streamFileWithRange(req, res, filePath);
     }
 
     // 2. Reassemble from Cloud Firestore chunks (/cms_uploads/{videoId}_chunk_*) across cold-starts!
@@ -222,7 +259,8 @@ module.exports = async (req, res) => {
         finalBuffer = fs.readFileSync(filePath);
       }
 
-      const proto = req.headers['x-forwarded-proto'] || 'https';
+      const isLocal = req.headers.host && (req.headers.host.includes('localhost') || req.headers.host.includes('127.0.0.1'));
+      const proto = req.headers['x-forwarded-proto'] || (isLocal ? 'http' : 'https');
       const host = req.headers['x-forwarded-host'] || req.headers.host || 'ads-broo.vercel.app';
       const localStreamUrl = `${proto}://${host}/api/upload?id=${videoId}`;
 

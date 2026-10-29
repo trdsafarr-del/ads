@@ -837,21 +837,21 @@
 
             <!-- Mode B: File Upload Dropzone -->
             <div id="fileUploadSection" style="display:none;">
+              <input
+                type="file"
+                id="videoFileInput"
+                accept="video/mp4,video/webm,video/quicktime,video/*"
+                style="display:none;"
+                onchange="handleVideoFileSelected(event)"
+              />
               <label>Select Video File from Computer / Mobile (.mp4, .webm, .mov)</label>
               <div class="upload-dropzone" onclick="document.getElementById('videoFileInput').click()">
-                <input
-                  type="file"
-                  id="videoFileInput"
-                  accept="video/mp4,video/webm,video/quicktime,video/*"
-                  style="display:none;"
-                  onchange="handleVideoFileSelected(event)"
-                />
                 <div style="font-size: 24px; margin-bottom: 6px;">&#128249;</div>
                 <div id="uploadFileStatusText" style="font-size: 13px; font-weight: 700; color: var(--cyan);">
                   Click here to choose a video file to upload
                 </div>
                 <div id="uploadProgressSubText" style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-                  Real Chunked + CDN Cloud Upload &mdash; Plays your exact uploaded video on Preview &amp; Android TV
+                  Real Chunked + Cloud Upload &mdash; Plays your exact uploaded video on Preview &amp; Android TV
                 </div>
               </div>
             </div>
@@ -1388,6 +1388,7 @@
       tempVid.src = selectedBlobUrl;
 
       showToast(`Real video "${file.name}" loaded in preview! Click "Upload / Add & Play on TVs Now"`);
+      try { event.target.value = ''; } catch(e) {}
     }
 
     function fillPreset(title, url, duration) {
@@ -1907,10 +1908,21 @@
       const kioskLocked = document.getElementById('kioskLockedCheck').checked;
       const vastTag = document.getElementById('vastInput').value;
 
-      const cleanedVideos = (currentState.videos || []).map((v, i) => ({
-        ...v,
-        order: i + 1
-      }));
+      const originBase = window.location.origin && window.location.origin.startsWith('http')
+        ? window.location.origin
+        : '';
+      const cleanedVideos = (currentState.videos || []).map((v, i) => {
+        let videoUrl = String(v.url || '').trim();
+        if (videoUrl.startsWith('blob:') && v.id) {
+          videoUrl = originBase ? `${originBase}/api/upload?id=${encodeURIComponent(v.id)}` : `/api/upload?id=${encodeURIComponent(v.id)}`;
+        }
+        return {
+          ...v,
+          url: videoUrl,
+          order: i + 1
+        };
+      });
+      currentState.videos = cleanedVideos;
 
       const nextVersion = (Number(currentState.version) || 1) + 1;
       const pushTs = extraFields.lastPushedVideoId ? Date.now() : (currentState.lastPushTimestamp || Date.now());
@@ -1960,18 +1972,21 @@
       showToast('Synced v' + currentState.version + ' live to Android App & TVs!');
     }
 
-    // Helper: Convert ArrayBuffer to Base64 string for fast chunked upload
-    function arrayBufferToBase64(buffer) {
-      let binary = '';
-      const bytes = new Uint8Array(buffer);
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-      }
-      return btoa(binary);
+    // Helper: Read a Blob slice directly into Base64 using native FileReader
+    function readBlobAsBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = reader.result;
+          const b64 = typeof res === 'string' && res.includes(',') ? res.split(',')[1] : res;
+          resolve(b64);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Failed to read video chunk'));
+        reader.readAsDataURL(blob);
+      });
     }
 
-    // High-speed direct video file upload (2.5 MB chunks, direct to server with instant local preview)
+    // High-speed direct video file upload (600 KB chunks, direct to server with instant local preview)
     async function uploadRealVideoFile(file, newVideoId, onProgress) {
       // 1. Immediately save in browser IndexedDB + localBlobUrls so preview plays in 0ms!
       await saveVideoBlobToIdb(newVideoId, file);
@@ -1982,18 +1997,17 @@
         : 'https://ads-broo.vercel.app';
       let finalServerUrl = `${originBase}/api/upload?id=${encodeURIComponent(newVideoId)}`;
 
-      // 2. High-speed 2.5 MB binary chunks for 5-10x faster transfer
-      const CHUNK_SIZE = 2.5 * 1024 * 1024;
+      // 2. High-speed 600 KB binary chunks (base64 ~800 KB, safely under Firestore 1 MB document limit)
+      const CHUNK_SIZE = 600 * 1024;
       const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         const start = chunkIndex * CHUNK_SIZE;
         const end = Math.min(file.size, start + CHUNK_SIZE);
         const slice = file.slice(start, end);
-        const arrayBuf = await slice.arrayBuffer();
-        const chunkBase64 = arrayBufferToBase64(arrayBuf);
+        const chunkBase64 = await readBlobAsBase64(slice);
         const pct = Math.round(((chunkIndex + 1) / totalChunks) * 100);
-        onProgress(`Uploading: ${pct}%...`);
+        onProgress(`Uploading: ${pct}% (${chunkIndex + 1}/${totalChunks})...`);
 
         try {
           const upRes = await fetch('/api/upload', {
@@ -2014,7 +2028,9 @@
               finalServerUrl = upData.url;
             }
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error(`Chunk ${chunkIndex} upload error:`, e);
+        }
       }
 
       return finalServerUrl;
@@ -2202,6 +2218,7 @@
           }
           return st;
         }).catch(() => {})
+      ]).catch(() => {});
     }
 
     async function playSelectedVideosNow() {

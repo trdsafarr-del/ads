@@ -11,7 +11,8 @@ const API_HANDLERS = {
   '/api/devices/action': require('./api/devices/action'),
   '/api/devices/heartbeat': require('./api/devices/heartbeat'),
   '/api/devices/pair': require('./api/devices/pair'),
-  '/api/upload': require('./api/upload')
+  '/api/upload': require('./api/upload'),
+  '/api/updates/check': require('./api/updates/check')
 };
 
 const MIME_TYPES = {
@@ -27,9 +28,28 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
+function ensureResponseHelpers(res) {
+  if (!res.status) {
+    res.status = function(code) {
+      res.statusCode = code;
+      return res;
+    };
+  }
+  if (!res.json) {
+    res.json = function(data) {
+      if (!res.headersSent) {
+        res.setHeader('Content-Type', 'application/json');
+      }
+      res.end(JSON.stringify(data));
+      return res;
+    };
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname || '/';
+  const rawPathname = parsedUrl.pathname || '/';
+  const pathname = rawPathname.length > 1 ? rawPathname.replace(/\/$/, '') : rawPathname;
 
   // Attach query object for Vercel handler compatibility
   req.query = parsedUrl.query || {};
@@ -37,17 +57,37 @@ const server = http.createServer(async (req, res) => {
   // Check if it's an API route
   const apiHandler = API_HANDLERS[pathname];
   if (apiHandler) {
+    ensureResponseHelpers(res);
+
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+      req.body = {};
+      try {
+        await apiHandler(req, res);
+      } catch (err) {
+        console.error(`API Error on ${pathname}:`, err);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message || 'Internal Server Error' }));
+        }
+      }
+      return;
+    }
+
     // Read request body for POST/PUT/PATCH
-    let bodyData = '';
+    const chunks = [];
+    let totalBytes = 0;
     req.on('data', chunk => {
-      bodyData += chunk;
+      chunks.push(chunk);
+      totalBytes += chunk.length;
       // Safeguard max 50 MB
-      if (bodyData.length > 50 * 1024 * 1024) {
+      if (totalBytes > 50 * 1024 * 1024) {
         req.destroy();
       }
     });
 
     req.on('end', async () => {
+      const bodyData = Buffer.concat(chunks).toString('utf8');
       if (bodyData) {
         try {
           req.body = JSON.parse(bodyData);
@@ -56,23 +96,6 @@ const server = http.createServer(async (req, res) => {
         }
       } else {
         req.body = {};
-      }
-
-      // Add status helper to res if missing
-      if (!res.status) {
-        res.status = function(code) {
-          res.statusCode = code;
-          return res;
-        };
-      }
-      if (!res.json) {
-        res.json = function(data) {
-          if (!res.headersSent) {
-            res.setHeader('Content-Type', 'application/json');
-          }
-          res.end(JSON.stringify(data));
-          return res;
-        };
       }
 
       try {

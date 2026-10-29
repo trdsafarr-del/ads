@@ -174,7 +174,7 @@ async function loadStateAsync() {
   const localState = loadState();
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3500);
+    const timer = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(FIRESTORE_STATE_DOC_URL, {
       method: 'GET',
       signal: controller.signal
@@ -246,7 +246,7 @@ async function saveStateAsync(state) {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1500);
+    const timer = setTimeout(() => controller.abort(), 5000);
     await fetch(FIRESTORE_STATE_DOC_URL, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
