@@ -540,6 +540,67 @@
       border-color: rgba(0, 230, 118, 0.35);
     }
 
+    .badge-downloading {
+      background: rgba(255, 179, 0, 0.16);
+      color: var(--amber);
+      border-color: rgba(255, 179, 0, 0.45);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .badge-error {
+      background: rgba(255, 82, 82, 0.16);
+      color: var(--coral);
+      border-color: rgba(255, 82, 82, 0.45);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    @keyframes spinLoaderAnim {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .spin-loader {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255, 179, 0, 0.25);
+      border-top-color: var(--amber);
+      border-radius: 50%;
+      animation: spinLoaderAnim 0.75s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .spin-loader-cyan {
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      border: 3px solid rgba(0, 229, 255, 0.22);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spinLoaderAnim 0.75s linear infinite;
+    }
+
+    .progress-bar-container {
+      width: 100%;
+      height: 8px;
+      background: #0d1829;
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 8px 0;
+      border: 1px solid var(--border);
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--cyan), var(--emerald));
+      transition: width 0.15s ease;
+    }
+
     .remote-btn-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1014,29 +1075,44 @@
   <!-- "Download for Offline" Popup Modal -->
   <div class="modal-backdrop" id="offlinePopupModal">
     <div class="modal-card">
-      <div style="width:56px; height:56px; border-radius:50%; background:rgba(0,230,118,0.15); border:1.5px solid var(--emerald); display:inline-flex; align-items:center; justify-content:center; font-size:26px; color:var(--emerald); margin-bottom:14px;">
+      <div id="offlinePopupIconBox" style="width:56px; height:56px; border-radius:50%; background:rgba(0,230,118,0.15); border:1.5px solid var(--emerald); display:inline-flex; align-items:center; justify-content:center; font-size:26px; color:var(--emerald); margin-bottom:14px;">
         &#11015;
       </div>
       <div style="margin-bottom:6px;">
-        <span class="badge badge-offline">NEW VIDEO UPLOADED &amp; PUSHED</span>
+        <span class="badge badge-offline" id="offlinePopupBadge">OFFLINE CACHE SETUP</span>
       </div>
-      <h3 style="font-size:19px; font-weight:800; color:#fff; margin-bottom:8px;">
+      <h3 style="font-size:19px; font-weight:800; color:#fff; margin-bottom:8px;" id="offlinePopupHeading">
         Download for Offline Playback?
       </h3>
       <p style="font-size:13px; color:var(--cyan); font-weight:700; margin-bottom:8px;" id="offlinePopupVideoTitle">
         Campaign Video
       </p>
-      <p style="font-size:12.5px; color:var(--muted); margin-bottom:20px;">
-        Click below to save this video for <strong>100% Offline Playback</strong> on your Android TV &amp; local cache so it runs smoothly even without internet.
+      <p style="font-size:12.5px; color:var(--muted); margin-bottom:16px;" id="offlinePopupSubtext">
+        Save this video into <strong>Device Storage &amp; Cache</strong> so it runs 24/7 without buffering or internet drops.
       </p>
-      <div id="offlineDownloadProgressBox" style="display:none; margin-bottom:16px; font-size:12px; color:var(--emerald); font-weight:700;">
-        Downloading video to offline storage...
+
+      <!-- Real-time Loading & Progress Box -->
+      <div id="offlineDownloadProgressBox" style="display:none; margin-bottom:16px; text-align:left; background:rgba(10,20,38,0.85); border:1px solid var(--border); border-radius:10px; padding:12px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span style="font-size:12px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:8px;" id="offlineProgressStatusLabel">
+            <span class="spin-loader"></span> Downloading real video file...
+          </span>
+          <span style="font-size:12px; font-weight:800; color:var(--cyan);" id="offlineProgressPercentText">0%</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="offlineProgressBarFill"></div>
+        </div>
+        <div style="font-size:11px; color:var(--muted); display:flex; justify-content:space-between;" id="offlineProgressSubtext">
+          <span id="offlineProgressBytes">0.0 MB / 0.0 MB</span>
+          <span id="offlineProgressVerifiedNote">Streaming Chunks</span>
+        </div>
       </div>
+
       <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
         <button class="btn btn-emerald" id="confirmOfflineDownloadBtn" onclick="confirmOfflineDownloadFromPopup()">
           &#11015; Download for Offline (No Internet Needed)
         </button>
-        <button class="btn btn-outline" onclick="closeOfflinePopup()">
+        <button class="btn btn-outline" id="closeOfflineModalBtn" onclick="closeOfflinePopup()">
           Later
         </button>
       </div>
@@ -1137,6 +1213,7 @@
     let monitorPlaylistQueue = [];
     let monitorQueueIndex = 0;
     let offlineCachedIds = JSON.parse(localStorage.getItem('signage_offline_ids') || '{}');
+    let activeDownloads = {}; // [videoId]: { state: 'downloading'|'ready'|'error', percent: 0, receivedMb: '0.0', totalMb: '0.0', error: null }
 
     function showToast(msg) {
       const el = document.getElementById('toastMsg');
@@ -1698,8 +1775,32 @@
       videos.forEach((v, idx) => {
         const isPushed = playlist.lastPushedVideoId === v.id || (!playlist.lastPushedVideoId && idx === 0);
         const isInActiveQueue = !activeIds || activeIds.includes(v.id);
-        const isOffline = Boolean(offlineCachedIds[v.id]);
+        const dlState = activeDownloads[v.id];
+        const isDownloading = dlState && dlState.state === 'downloading';
+        const hasError = dlState && dlState.state === 'error';
+        const isOffline = !isDownloading && !hasError && Boolean(offlineCachedIds[v.id]);
         const isChecked = selectedVideoIdsSet.has(v.id);
+
+        let offlineBadgeHtml = '';
+        if (isDownloading) {
+          offlineBadgeHtml = `<span class="badge badge-downloading" id="badge_dl_${v.id}"><span class="spin-loader"></span> Downloading (${dlState.percent || 0}%)...</span>`;
+        } else if (hasError) {
+          offlineBadgeHtml = `<span class="badge badge-error" title="${dlState.error || 'Download incomplete'}">&#10006; Offline Incomplete</span>`;
+        } else if (isOffline) {
+          offlineBadgeHtml = `<span class="badge badge-offline">&#10004; Offline Ready</span>`;
+        }
+
+        let offlineBtnHtml = '';
+        if (isDownloading) {
+          offlineBtnHtml = `<button class="btn btn-outline btn-sm" disabled style="opacity:0.75; cursor:wait;"><span class="spin-loader"></span> ${dlState.percent || 0}%</button>`;
+        } else if (isOffline) {
+          offlineBtnHtml = `<button class="btn btn-emerald btn-sm" onclick="openOfflinePopupForVideo('${v.id}')" title="Offline Ready! Click to manage">&#10004; Offline</button>`;
+        } else if (hasError) {
+          offlineBtnHtml = `<button class="btn btn-coral btn-sm" onclick="openOfflinePopupForVideo('${v.id}')" title="Retry Offline Download">&#x21bb; Retry</button>`;
+        } else {
+          offlineBtnHtml = `<button class="btn btn-outline btn-sm" onclick="openOfflinePopupForVideo('${v.id}')" title="Download for Offline">&#11015; Offline</button>`;
+        }
+
         const div = document.createElement('div');
         div.className = 'video-item' + (isPushed ? ' playing-now' : '');
         div.innerHTML = `
@@ -1717,14 +1818,14 @@
                 <span class="badge badge-duration">${v.duration || 30}s</span>
                 ${isPushed ? '<span class="badge badge-offline">&#9654; Playing Now</span>' : ''}
                 ${isInActiveQueue && activeIds ? '<span class="badge">In Active Loop</span>' : ''}
-                ${isOffline ? '<span class="badge badge-offline">&#10004; Offline Ready</span>' : ''}
+                ${offlineBadgeHtml}
               </h4>
               <div class="video-url-line" title="${v.url}">${v.url}</div>
             </div>
           </div>
           <div class="video-actions">
             <button class="btn btn-emerald btn-sm" onclick="pushPlayVideoNow('${v.id}')" title="Force Play Immediately on Target TV(s)">&#9654; Play Now</button>
-            <button class="btn btn-outline btn-sm" onclick="openOfflinePopupForVideo('${v.id}')" title="Download for Offline">&#11015; Offline</button>
+            ${offlineBtnHtml}
             <button class="btn btn-coral btn-sm" onclick="removeVideoItem('${v.id}')">Delete</button>
           </div>
         `;
@@ -2350,8 +2451,107 @@
 
     function openOfflinePopup(videoObj) {
       pendingOfflineVideo = videoObj;
-      document.getElementById('offlinePopupVideoTitle').textContent = videoObj.title || videoObj.id;
-      document.getElementById('offlineDownloadProgressBox').style.display = 'none';
+      const vid = videoObj;
+      const dlState = activeDownloads[vid.id];
+      const isOffline = Boolean(offlineCachedIds[vid.id]) && (!dlState || dlState.state === 'ready');
+      const isDownloading = dlState && dlState.state === 'downloading';
+      const hasError = dlState && dlState.state === 'error';
+
+      document.getElementById('offlinePopupVideoTitle').textContent = vid.title || vid.id;
+      const progressBox = document.getElementById('offlineDownloadProgressBox');
+      const confirmBtn = document.getElementById('confirmOfflineDownloadBtn');
+      const headingEl = document.getElementById('offlinePopupHeading');
+      const badgeEl = document.getElementById('offlinePopupBadge');
+      const subtextEl = document.getElementById('offlinePopupSubtext');
+      const iconBox = document.getElementById('offlinePopupIconBox');
+
+      if (isDownloading) {
+        if (headingEl) headingEl.textContent = 'Downloading for Offline Playback...';
+        if (badgeEl) {
+          badgeEl.textContent = 'DOWNLOADING REAL CHUNKS';
+          badgeEl.className = 'badge badge-downloading';
+        }
+        if (subtextEl) subtextEl.innerHTML = 'Streaming and caching MP4 data so this video plays 100% offline without buffering.';
+        if (iconBox) iconBox.innerHTML = '<span class="spin-loader-cyan"></span>';
+        if (progressBox) progressBox.style.display = 'block';
+        updateOfflineModalProgress(dlState.percent || 0, dlState.receivedMb || '0.0', dlState.totalMb || '0.0');
+        if (confirmBtn) {
+          confirmBtn.disabled = true;
+          confirmBtn.innerHTML = '<span class="spin-loader"></span> Downloading (' + (dlState.percent || 0) + '%)...';
+        }
+      } else if (isOffline) {
+        if (headingEl) headingEl.textContent = '✔ Video is 100% Offline Ready';
+        if (badgeEl) {
+          badgeEl.textContent = 'VERIFIED IN CACHE';
+          badgeEl.className = 'badge badge-offline';
+        }
+        if (subtextEl) subtextEl.innerHTML = 'This video file is verified and saved on device storage. It will play seamlessly 24/7 without internet.';
+        if (iconBox) {
+          iconBox.innerHTML = '&#10004;';
+          iconBox.style.color = 'var(--emerald)';
+          iconBox.style.borderColor = 'var(--emerald)';
+        }
+        if (progressBox) progressBox.style.display = 'block';
+        const statusLabel = document.getElementById('offlineProgressStatusLabel');
+        if (statusLabel) statusLabel.innerHTML = '<span style="color:var(--emerald); font-weight:800;">✔ Verified Offline Ready</span>';
+        const pText = document.getElementById('offlineProgressPercentText');
+        if (pText) pText.textContent = '100%';
+        const pFill = document.getElementById('offlineProgressBarFill');
+        if (pFill) pFill.style.width = '100%';
+        const pBytes = document.getElementById('offlineProgressBytes');
+        if (pBytes) pBytes.textContent = 'Saved in Cache & Storage';
+        const pNote = document.getElementById('offlineProgressVerifiedNote');
+        if (pNote) pNote.textContent = 'Zero Internet Required';
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.innerHTML = '&#x21bb; Re-download / Verify Offline Cache';
+        }
+      } else if (hasError) {
+        if (headingEl) headingEl.textContent = 'Offline Download Incomplete';
+        if (badgeEl) {
+          badgeEl.textContent = 'DOWNLOAD FAILED';
+          badgeEl.className = 'badge badge-error';
+        }
+        if (subtextEl) subtextEl.innerHTML = 'The video could not be fully downloaded into offline storage. Click Retry below.';
+        if (iconBox) {
+          iconBox.innerHTML = '&#10006;';
+          iconBox.style.color = 'var(--coral)';
+          iconBox.style.borderColor = 'var(--coral)';
+        }
+        if (progressBox) progressBox.style.display = 'block';
+        const statusLabel = document.getElementById('offlineProgressStatusLabel');
+        if (statusLabel) statusLabel.innerHTML = '<span style="color:var(--coral); font-weight:800;">✖ ' + (dlState.error || 'Download incomplete') + '</span>';
+        const pText = document.getElementById('offlineProgressPercentText');
+        if (pText) pText.textContent = 'Error';
+        const pFill = document.getElementById('offlineProgressBarFill');
+        if (pFill) pFill.style.width = '0%';
+        const pBytes = document.getElementById('offlineProgressBytes');
+        if (pBytes) pBytes.textContent = 'Not Cached';
+        const pNote = document.getElementById('offlineProgressVerifiedNote');
+        if (pNote) pNote.textContent = 'Please Retry';
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.innerHTML = '&#x21bb; Retry Download for Offline';
+        }
+      } else {
+        if (headingEl) headingEl.textContent = 'Download for Offline Playback?';
+        if (badgeEl) {
+          badgeEl.textContent = 'OFFLINE CACHE SETUP';
+          badgeEl.className = 'badge badge-offline';
+        }
+        if (subtextEl) subtextEl.innerHTML = 'Save this video into <strong>Device Storage &amp; Cache</strong> so it runs 24/7 without buffering or internet drops.';
+        if (iconBox) {
+          iconBox.innerHTML = '&#11015;';
+          iconBox.style.color = 'var(--emerald)';
+          iconBox.style.borderColor = 'var(--emerald)';
+        }
+        if (progressBox) progressBox.style.display = 'none';
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.innerHTML = '&#11015; Download for Offline (No Internet Needed)';
+        }
+      }
+
       document.getElementById('offlinePopupModal').style.display = 'flex';
     }
 
@@ -2360,47 +2560,245 @@
       pendingOfflineVideo = null;
     }
 
+    function updateOfflineModalProgress(pct, recMb, totMb) {
+      const pBox = document.getElementById('offlineDownloadProgressBox');
+      if (pBox) pBox.style.display = 'block';
+      const fill = document.getElementById('offlineProgressBarFill');
+      if (fill) fill.style.width = `${pct}%`;
+      const pText = document.getElementById('offlineProgressPercentText');
+      if (pText) pText.textContent = `${pct}%`;
+      const pBytes = document.getElementById('offlineProgressBytes');
+      if (pBytes) pBytes.textContent = `${recMb} MB / ${totMb} MB`;
+      const pLabel = document.getElementById('offlineProgressStatusLabel');
+      if (pLabel) {
+        pLabel.innerHTML = `<span class="spin-loader"></span> Downloading real video file (${pct}%)...`;
+      }
+    }
+
+    function updatePlaylistDownloadBadge(vidId, pct) {
+      const badge = document.getElementById('badge_dl_' + vidId);
+      if (badge) {
+        badge.innerHTML = `<span class="spin-loader"></span> Downloading (${pct}%)...`;
+      }
+    }
+
     async function confirmOfflineDownloadFromPopup() {
       if (!pendingOfflineVideo) return;
       const vid = pendingOfflineVideo;
+      await startRealOfflineDownload(vid);
+    }
+
+    async function startRealOfflineDownload(vid) {
+      if (!vid || !vid.id) return;
+      const vidId = vid.id;
       const progressBox = document.getElementById('offlineDownloadProgressBox');
-      progressBox.style.display = 'block';
-      progressBox.textContent = 'Caching video for offline playback on TV & Browser...';
+      const confirmBtn = document.getElementById('confirmOfflineDownloadBtn');
+      const iconBox = document.getElementById('offlinePopupIconBox');
+      const headingEl = document.getElementById('offlinePopupHeading');
+      const badgeEl = document.getElementById('offlinePopupBadge');
+
+      activeDownloads[vidId] = {
+        state: 'downloading',
+        percent: 0,
+        receivedMb: '0.0',
+        totalMb: '0.0',
+        error: null
+      };
+      delete offlineCachedIds[vidId];
+      renderPlaylist(currentState);
+
+      if (progressBox) progressBox.style.display = 'block';
+      if (iconBox) iconBox.innerHTML = '<span class="spin-loader-cyan"></span>';
+      if (headingEl) headingEl.textContent = 'Downloading Real Video File...';
+      if (badgeEl) {
+        badgeEl.textContent = 'DOWNLOADING REAL CHUNKS';
+        badgeEl.className = 'badge badge-downloading';
+      }
+      if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spin-loader"></span> Downloading (0%)...';
+      }
+      updateOfflineModalProgress(0, '0.0', '...');
 
       try {
-        await saveFirestoreGlobalState((st) => {
-          st.playlist = st.playlist || currentState;
-          st.playlist.offlineDownloadRequestedVideoId = vid.id;
-          st.playlist.version = (Number(st.playlist.version) || 1) + 1;
-          return st;
-        });
-
-        await fetch('/api/devices/action', {
+        // Step 1: Notify Android TV devices and Cloud Firestore
+        fetch('/api/devices/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceId: '*', action: 'downloadOffline:' + vid.id })
+          body: JSON.stringify({ deviceId: '*', action: 'downloadOffline:' + vidId })
         }).catch(() => {});
 
-        if ('caches' in window) {
-          const cache = await caches.open('signage-offline-videos-v1');
-          await cache.add(vid.url).catch(() => {});
+        saveFirestoreGlobalState((st) => {
+          st.playlist = st.playlist || currentState;
+          st.playlist.offlineDownloadRequestedVideoId = vidId;
+          st.playlist.version = (Number(st.playlist.version) || 1) + 1;
+          return st;
+        }).catch(() => {});
+
+        // Step 2: Acquire verified video Blob
+        let finalBlob = null;
+
+        // Check 2a: Is the blob already stored in IndexedDB?
+        const idbBlob = await getVideoBlobFromIdb(vidId);
+        if (idbBlob && idbBlob.size > 1024) {
+          const totMb = (idbBlob.size / (1024 * 1024)).toFixed(1);
+          for (let p of [25, 60, 90, 100]) {
+            activeDownloads[vidId] = {
+              state: 'downloading',
+              percent: p,
+              receivedMb: ((idbBlob.size * p) / (100 * 1024 * 1024)).toFixed(1),
+              totalMb: totMb
+            };
+            updateOfflineModalProgress(p, activeDownloads[vidId].receivedMb, totMb);
+            updatePlaylistDownloadBadge(vidId, p);
+            await new Promise(r => setTimeout(r, 60));
+          }
+          finalBlob = idbBlob;
+        } else {
+          // Check 2b: Stream real bytes from remote URL with progress tracking
+          let downloadUrl = vid.url;
+          if (downloadUrl.startsWith('blob:') && localBlobUrls[vidId]) {
+            downloadUrl = localBlobUrls[vidId];
+          }
+
+          let response;
+          try {
+            response = await fetch(downloadUrl);
+            if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+          } catch (corsErr) {
+            // If direct fetch hit CORS restriction on 3rd party domain, fallback to local proxy stream!
+            const originBase = window.location.origin && window.location.origin.startsWith('http')
+              ? window.location.origin
+              : '';
+            const proxyUrl = `${originBase}/api/upload?proxyUrl=${encodeURIComponent(downloadUrl)}`;
+            response = await fetch(proxyUrl);
+            if (!response.ok) throw new Error(`Download stream failed: ${response.status}`);
+          }
+
+          const contentLength = Number(response.headers.get('content-length')) || 0;
+          let receivedBytes = 0;
+          const reader = response.body.getReader();
+          const chunks = [];
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            receivedBytes += value.length;
+
+            const pct = contentLength > 0
+              ? Math.min(99, Math.round((receivedBytes / contentLength) * 100))
+              : Math.min(95, Math.round(receivedBytes / (300 * 1024)));
+            const recMb = (receivedBytes / (1024 * 1024)).toFixed(1);
+            const totMb = contentLength > 0 ? (contentLength / (1024 * 1024)).toFixed(1) : '?';
+
+            activeDownloads[vidId] = {
+              state: 'downloading',
+              percent: pct,
+              receivedMb: recMb,
+              totalMb: totMb
+            };
+            updateOfflineModalProgress(pct, recMb, totMb);
+            updatePlaylistDownloadBadge(vidId, pct);
+            if (confirmBtn) {
+              confirmBtn.innerHTML = `<span class="spin-loader"></span> Downloading (${pct}%)...`;
+            }
+          }
+
+          finalBlob = new Blob(chunks, { type: 'video/mp4' });
+          if (!finalBlob || finalBlob.size < 1024) {
+            throw new Error('Downloaded file too small or empty');
+          }
+          await saveVideoBlobToIdb(vidId, finalBlob);
         }
 
-        offlineCachedIds[vid.id] = true;
-        localStorage.setItem('signage_offline_ids', JSON.stringify(offlineCachedIds));
+        // Step 3: Cache into CacheStorage
+        if ('caches' in window && finalBlob) {
+          try {
+            const cache = await caches.open('signage-offline-videos-v1');
+            await cache.put(vid.url, new Response(finalBlob, {
+              headers: {
+                'Content-Type': 'video/mp4',
+                'Content-Length': String(finalBlob.size)
+              }
+            }));
+          } catch (cErr) {
+            console.warn('CacheStorage put note:', cErr);
+          }
+        }
 
-        progressBox.textContent = '✔ Saved Offline! Video will now play without internet.';
+        // Step 4: VERIFIED 100% SUCCESS — Only now mark as offline ready!
+        const finalMb = (finalBlob.size / (1024 * 1024)).toFixed(1);
+        offlineCachedIds[vidId] = true;
+        localStorage.setItem('signage_offline_ids', JSON.stringify(offlineCachedIds));
+        activeDownloads[vidId] = {
+          state: 'ready',
+          percent: 100,
+          receivedMb: finalMb,
+          totalMb: finalMb
+        };
+
+        const fillEl = document.getElementById('offlineProgressBarFill');
+        if (fillEl) fillEl.style.width = '100%';
+        const pText = document.getElementById('offlineProgressPercentText');
+        if (pText) pText.textContent = '100%';
+        const statusEl = document.getElementById('offlineProgressStatusLabel');
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="color:var(--emerald); font-weight:800;">✔ Verified Offline Ready! (${finalMb} MB)</span>`;
+        }
+        const subnoteEl = document.getElementById('offlineProgressVerifiedNote');
+        if (subnoteEl) subnoteEl.textContent = '100% Complete';
+        if (iconBox) {
+          iconBox.innerHTML = '&#10004;';
+          iconBox.style.color = 'var(--emerald)';
+          iconBox.style.borderColor = 'var(--emerald)';
+        }
+        if (badgeEl) {
+          badgeEl.textContent = 'VERIFIED OFFLINE READY';
+          badgeEl.className = 'badge badge-offline';
+        }
+
         renderPlaylist(currentState);
-        showToast(`"${vid.title}" downloaded for offline playback!`);
+        showToast(`✔ "${vid.title}" (${finalMb} MB) downloaded & verified offline ready!`);
+
         setTimeout(() => {
           closeOfflinePopup();
-        }, 900);
-      } catch (e) {
-        offlineCachedIds[vid.id] = true;
+        }, 1300);
+
+      } catch (err) {
+        console.error('Offline download error:', err);
+        // CRITICAL: NEVER mark as offline ready on error!
+        delete offlineCachedIds[vidId];
         localStorage.setItem('signage_offline_ids', JSON.stringify(offlineCachedIds));
+        activeDownloads[vidId] = {
+          state: 'error',
+          error: err.message || 'Network download failed'
+        };
+
+        if (iconBox) {
+          iconBox.innerHTML = '&#10006;';
+          iconBox.style.color = 'var(--coral)';
+          iconBox.style.borderColor = 'var(--coral)';
+        }
+        if (badgeEl) {
+          badgeEl.textContent = 'DOWNLOAD FAILED';
+          badgeEl.className = 'badge badge-error';
+        }
+        const statusEl = document.getElementById('offlineProgressStatusLabel');
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="color:var(--coral); font-weight:800;">✖ Error: ${err.message || 'Download failed'}</span>`;
+        }
+        const pText = document.getElementById('offlineProgressPercentText');
+        if (pText) pText.textContent = 'Failed';
+        const noteEl = document.getElementById('offlineProgressVerifiedNote');
+        if (noteEl) noteEl.textContent = 'Not Saved Offline';
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.innerHTML = '&#x21bb; Retry Download for Offline';
+        }
+
         renderPlaylist(currentState);
-        closeOfflinePopup();
-        showToast(`"${vid.title}" queued for offline caching on Android TV!`);
+        showToast(`Download failed: ${err.message || 'Network error'}. Video is NOT saved offline.`);
       }
     }
 
@@ -2560,9 +2958,36 @@
       loadDashboardData();
     }
 
+    // Startup verification: Never show fake offline ready if file was not actually stored
+    async function verifyOfflineCacheOnStartup() {
+      if ('caches' in window) {
+        try {
+          const cache = await caches.open('signage-offline-videos-v1');
+          const keys = await cache.keys();
+          const cachedUrls = new Set(keys.map(k => k.url));
+          let changed = false;
+          for (const vid of (currentState.videos || [])) {
+            if (offlineCachedIds[vid.id]) {
+              const inCache = cachedUrls.has(vid.url);
+              const inIdb = await getVideoBlobFromIdb(vid.id);
+              if (!inCache && (!inIdb || inIdb.size < 1024)) {
+                delete offlineCachedIds[vid.id];
+                changed = true;
+              }
+            }
+          }
+          if (changed) {
+            localStorage.setItem('signage_offline_ids', JSON.stringify(offlineCachedIds));
+            renderPlaylist(currentState);
+          }
+        } catch (e) {}
+      }
+    }
+
     // Instant 0ms synchronous render from localStorage before any network request
     renderPlaylist(currentState);
     updateSelectedBadge();
+    verifyOfflineCacheOnStartup();
 
     loadDashboardData();
     setInterval(loadDashboardData, 4500);

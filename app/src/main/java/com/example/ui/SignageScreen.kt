@@ -26,13 +26,16 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,6 +64,8 @@ import com.example.ui.components.SignageAutoHideSidebar
 import com.example.ui.components.SignageHeaderBar
 import com.example.ui.diagnostic.DiagnosticOverlay
 import com.example.ui.pairing.DevicePairingScreen
+import com.example.ui.theme.AmberAccent
+import com.example.ui.theme.CoralRed
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.SignageCard
@@ -315,7 +320,9 @@ fun SignageScreen(
             OfflineDownloadPopup(
                 videoItem = popupVideo,
                 isDownloading = uiState.isDownloadingOffline,
+                progressPercent = uiState.offlineDownloadProgressPercent,
                 successMessage = uiState.offlineDownloadSuccessMessage,
+                errorMessage = uiState.offlineDownloadErrorMessage,
                 onConfirmDownload = { viewModel.confirmDownloadVideoForOffline(popupVideo) },
                 onDismiss = { viewModel.dismissOfflinePopup() },
                 modifier = Modifier.align(Alignment.Center)
@@ -415,7 +422,9 @@ fun SignageScreen(
 private fun OfflineDownloadPopup(
     videoItem: PlaylistItem,
     isDownloading: Boolean,
+    progressPercent: Int,
     successMessage: String?,
+    errorMessage: String?,
     onConfirmDownload: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -432,7 +441,7 @@ private fun OfflineDownloadPopup(
             modifier = Modifier
                 .widthIn(max = 460.dp)
                 .fillMaxWidth()
-                .border(2.dp, NeonCyan, RoundedCornerShape(20.dp)),
+                .border(2.dp, if (errorMessage != null) CoralRed else NeonCyan, RoundedCornerShape(20.dp)),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = SignageCard),
             elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
@@ -443,31 +452,57 @@ private fun OfflineDownloadPopup(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val iconColor = when {
+                    errorMessage != null -> CoralRed
+                    successMessage != null -> EmeraldGreen
+                    isDownloading -> NeonCyan
+                    else -> EmeraldGreen
+                }
+                val iconVector = when {
+                    errorMessage != null -> Icons.Default.ErrorOutline
+                    successMessage != null -> Icons.Default.CheckCircle
+                    else -> Icons.Default.CloudDownload
+                }
+
                 Box(
                     modifier = Modifier
                         .size(56.dp)
-                        .background(EmeraldGreen.copy(alpha = 0.18f), CircleShape)
-                        .border(1.5.dp, EmeraldGreen, CircleShape),
+                        .background(iconColor.copy(alpha = 0.18f), CircleShape)
+                        .border(1.5.dp, iconColor, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CloudDownload,
-                        contentDescription = "Download for Offline",
-                        tint = EmeraldGreen,
-                        modifier = Modifier.size(30.dp)
-                    )
+                    if (isDownloading) {
+                        CircularProgressIndicator(
+                            color = NeonCyan,
+                            modifier = Modifier.size(32.dp),
+                            strokeWidth = 3.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = iconVector,
+                            contentDescription = "Download status icon",
+                            tint = iconColor,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                val badgeText = when {
+                    errorMessage != null -> "DOWNLOAD INCOMPLETE"
+                    successMessage != null -> "VERIFIED OFFLINE READY"
+                    isDownloading -> "DOWNLOADING: $progressPercent%"
+                    else -> "OFFLINE PLAYBACK SETUP"
+                }
                 Box(
                     modifier = Modifier
-                        .background(EmeraldGreen.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                        .background(iconColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "NEW VIDEO UPLOADED & PUSHED",
-                        color = EmeraldGreen,
+                        text = badgeText,
+                        color = iconColor,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
@@ -475,8 +510,14 @@ private fun OfflineDownloadPopup(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                val headingText = when {
+                    errorMessage != null -> "Offline Download Failed"
+                    successMessage != null -> "Video is Offline Ready!"
+                    isDownloading -> "Downloading Video Chunks..."
+                    else -> "Download for Offline Playback?"
+                }
                 Text(
-                    text = "Download for Offline?",
+                    text = headingText,
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -495,40 +536,55 @@ private fun OfflineDownloadPopup(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Text(
-                    text = "Tap 'Download for Offline' to save this video on device storage so it plays 24/7 even without an internet connection.",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                if (successMessage != null) {
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        color = CoralRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                } else if (successMessage != null) {
                     Text(
                         text = successMessage,
                         color = EmeraldGreen,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(bottom = 12.dp)
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
-                } else if (isDownloading) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(bottom = 14.dp)
+                } else {
+                    Text(
+                        text = "Save this video into device storage so it runs 24/7 with zero buffering even when internet is completely disconnected.",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (isDownloading) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp)
                     ) {
-                        CircularProgressIndicator(
-                            color = EmeraldGreen,
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.5.dp
+                        LinearProgressIndicator(
+                            progress = { (progressPercent.coerceIn(0, 100) / 100f) },
+                            color = NeonCyan,
+                            trackColor = Color.DarkGray,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Saving video for offline playback...",
-                            color = EmeraldGreen,
-                            fontSize = 12.sp,
+                            text = "Downloading video chunks: $progressPercent%...",
+                            color = NeonCyan,
+                            fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -538,25 +594,41 @@ private fun OfflineDownloadPopup(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    val btnColor = if (errorMessage != null) CoralRed else EmeraldGreen
+                    val btnText = when {
+                        isDownloading -> "Downloading ($progressPercent%)..."
+                        errorMessage != null -> "Retry Download"
+                        successMessage != null -> "✔ Downloaded"
+                        else -> "Download for Offline"
+                    }
                     Button(
                         onClick = onConfirmDownload,
-                        enabled = !isDownloading,
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                        enabled = !isDownloading && successMessage == null,
+                        colors = ButtonDefaults.buttonColors(containerColor = btnColor),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .weight(1.3f)
                             .height(48.dp)
                             .testTag("download_for_offline_button")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.CloudDownload,
-                            contentDescription = null,
-                            tint = Color.Black,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        if (isDownloading) {
+                            CircularProgressIndicator(
+                                color = Color.Black,
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        } else {
+                            Icon(
+                                imageVector = if (errorMessage != null) Icons.Default.CloudDownload else Icons.Default.CloudDownload,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
                         Text(
-                            text = "Download for Offline",
+                            text = btnText,
                             color = Color.Black,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold
@@ -572,7 +644,7 @@ private fun OfflineDownloadPopup(
                             .testTag("dismiss_offline_popup_button")
                     ) {
                         Text(
-                            text = "Later",
+                            text = if (successMessage != null) "Close" else "Later",
                             color = TextSecondary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold

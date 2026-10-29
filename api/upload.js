@@ -166,6 +166,28 @@ module.exports = async (req, res) => {
   } catch (e) {}
 
   if (req.method === 'GET') {
+    if (req.query && req.query.proxyUrl) {
+      const targetUrl = String(req.query.proxyUrl);
+      try {
+        const fetchRes = await fetch(targetUrl);
+        if (!fetchRes.ok) {
+          return res.status(fetchRes.status).json({ error: `Proxy fetch failed: ${fetchRes.statusText}` });
+        }
+        setCors(res);
+        const totalSize = fetchRes.headers.get('content-length');
+        if (totalSize) res.setHeader('Content-Length', totalSize);
+        res.setHeader('Content-Type', fetchRes.headers.get('content-type') || 'video/mp4');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+
+        const arrayBuf = await fetchRes.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        return streamBufferWithRange(req, res, buffer);
+      } catch (err) {
+        return res.status(502).json({ error: `Failed to proxy video: ${err.message}` });
+      }
+    }
+
     const videoId = req.query && req.query.id ? String(req.query.id).replace(/[^a-zA-Z0-9_-]/g, '_') : '';
     if (!videoId) {
       return res.status(400).json({ error: 'Missing video id' });

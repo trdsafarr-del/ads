@@ -58,6 +58,8 @@ data class SignageUiState(
     val pendingOfflinePopupVideo: PlaylistItem? = null,
     val isDownloadingOffline: Boolean = false,
     val offlineDownloadSuccessMessage: String? = null,
+    val offlineDownloadErrorMessage: String? = null,
+    val offlineDownloadProgressPercent: Int = 0,
     val pushedVideoIdToAutoPlay: String? = null
 )
 
@@ -465,23 +467,34 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isDownloadingOffline = true,
-                offlineDownloadSuccessMessage = null
+                offlineDownloadSuccessMessage = null,
+                offlineDownloadErrorMessage = null,
+                offlineDownloadProgressPercent = 10
             )
-            val ok = repository.downloadVideoForOffline(item)
-            _uiState.value = _uiState.value.copy(
-                isDownloadingOffline = false,
-                offlineDownloadSuccessMessage = if (ok) {
-                    "✔ Video Saved for Offline! Ready to play without internet."
-                } else {
-                    "✔ Offline fallback cached! Ready to play without internet."
-                },
-                cacheSizeBytes = localStore.getCachedStorageSizeBytes()
-            )
-            delay(1400L)
-            _uiState.value = _uiState.value.copy(
-                pendingOfflinePopupVideo = null,
-                offlineDownloadSuccessMessage = null
-            )
+            val ok = repository.downloadVideoForOffline(item) { pct ->
+                _uiState.value = _uiState.value.copy(offlineDownloadProgressPercent = pct)
+            }
+            if (ok) {
+                _uiState.value = _uiState.value.copy(
+                    isDownloadingOffline = false,
+                    offlineDownloadProgressPercent = 100,
+                    offlineDownloadSuccessMessage = "✔ Video Saved for Offline! Ready to play without internet.",
+                    offlineDownloadErrorMessage = null,
+                    cacheSizeBytes = localStore.getCachedStorageSizeBytes()
+                )
+                delay(1500L)
+                _uiState.value = _uiState.value.copy(
+                    pendingOfflinePopupVideo = null,
+                    offlineDownloadSuccessMessage = null
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isDownloadingOffline = false,
+                    offlineDownloadProgressPercent = 0,
+                    offlineDownloadSuccessMessage = null,
+                    offlineDownloadErrorMessage = "✖ Download failed or incomplete. Video is NOT saved offline. Please check connection and retry."
+                )
+            }
         }
     }
 
@@ -489,6 +502,8 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(
             pendingOfflinePopupVideo = item,
             offlineDownloadSuccessMessage = null,
+            offlineDownloadErrorMessage = null,
+            offlineDownloadProgressPercent = 0,
             isDownloadingOffline = false
         )
     }
@@ -501,7 +516,9 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(
             pendingOfflinePopupVideo = null,
             isDownloadingOffline = false,
-            offlineDownloadSuccessMessage = null
+            offlineDownloadSuccessMessage = null,
+            offlineDownloadErrorMessage = null,
+            offlineDownloadProgressPercent = 0
         )
     }
 

@@ -609,18 +609,25 @@ class SignageRepository(private val context: Context) {
     /**
      * Downloads a specific video to persistent local storage for 100% offline playback without internet.
      */
-    suspend fun downloadVideoForOffline(item: PlaylistItem): Boolean = withContext(Dispatchers.IO) {
+    suspend fun downloadVideoForOffline(
+        item: PlaylistItem,
+        onProgress: ((Int) -> Unit)? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         val localFile = localStore.getLocalVideoFile(item)
         val api = createRetrofit(localStore.getApiServerUrl())
 
         var isReadyOnDisk = localFile.exists() && localFile.length() > 1024L &&
             SignageSampleVideoGenerator.isValidMp4File(localFile)
         if (!isReadyOnDisk) {
+            onProgress?.invoke(25)
             val downloaded = downloadVideoWithRetry(api, item.videoUrl, localFile, item.id)
-            isReadyOnDisk = downloaded && SignageSampleVideoGenerator.isValidMp4File(localFile)
+            onProgress?.invoke(85)
+            isReadyOnDisk = downloaded && localFile.exists() && localFile.length() > 1024L &&
+                SignageSampleVideoGenerator.isValidMp4File(localFile)
         }
 
         if (isReadyOnDisk) {
+            onProgress?.invoke(100)
             localStore.markVideoOfflineDownloaded(item.id)
             localStore.markOfflinePopupShown(item.id)
 
@@ -650,8 +657,14 @@ class SignageRepository(private val context: Context) {
             }
             val updatedPlaylist = current.copy(items = updatedItems)
             persistUpdatedPlaylist(updatedPlaylist, autoSynthesizeMissing = false)
+            true
+        } else {
+            // Strictly delete corrupt or incomplete file and never mark as offline
+            if (localFile.exists() && !SignageSampleVideoGenerator.isValidMp4File(localFile)) {
+                localFile.delete()
+            }
+            false
         }
-        isReadyOnDisk
     }
 
     /**
