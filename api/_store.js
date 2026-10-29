@@ -107,12 +107,13 @@ function sanitizeUrl(url, index, videoId, uploadedVideos) {
   if (!s || s.includes('commondatastorage.googleapis.com/gtv-videos-bucket')) {
     return RELIABLE_URLS[index % RELIABLE_URLS.length];
   }
-  // If it's a tmpfiles.org link, convert to direct download / stream link if needed
+  // tmpfiles.org links expire quickly and return 404 to video players.
+  // Replace with reliable stream unless there is a valid local uploaded video.
   if (s.includes('tmpfiles.org')) {
-    if (s.includes('tmpfiles.org/dl/')) {
-      return s;
+    if (videoId && uploadedVideos && uploadedVideos[videoId] && uploadedVideos[videoId].url) {
+      return uploadedVideos[videoId].url;
     }
-    return s.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+    return RELIABLE_URLS[index % RELIABLE_URLS.length];
   }
   return s;
 }

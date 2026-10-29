@@ -1311,16 +1311,26 @@ fun AdminSettingsPanel(
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
+                                        val isItemOffline = item.isOfflineDownloaded || item.localFilePath != null
                                         IconButton(
                                             onClick = { onDownloadVideoOffline(item) },
                                             modifier = Modifier.size(30.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.CloudDownload,
-                                                contentDescription = "Download for Offline",
-                                                tint = NeonCyan,
-                                                modifier = Modifier.size(16.dp)
-                                            )
+                                            if (isItemOffline) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = "Verified Offline Ready",
+                                                    tint = EmeraldGreen,
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.CloudDownload,
+                                                    contentDescription = "Download for Offline",
+                                                    tint = NeonCyan,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
                                         }
                                         if (playlist.items.size > 1) {
                                             IconButton(

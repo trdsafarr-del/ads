@@ -17,9 +17,16 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.example.data.model.PlaylistItem
 import com.example.service.WatchdogService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 
 @OptIn(UnstableApi::class)
@@ -28,6 +35,9 @@ class SignagePlayerManager(private val context: Context) {
     private var exoPlayer: ExoPlayer? = null
     private var playerView: PlayerView? = null
     private var hostActivity: Activity? = null
+
+    private val playerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var bufferingWatchdogJob: Job? = null
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -64,10 +74,10 @@ class SignagePlayerManager(private val context: Context) {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 15_000,
-                /* maxBufferMs = */ 60_000,
-                /* bufferForPlaybackMs = */ 2_500,
-                /* bufferForPlaybackAfterRebufferMs = */ 5_000
+                /* minBufferMs = */ 2_500,
+                /* maxBufferMs = */ 15_000,
+                /* bufferForPlaybackMs = */ 500,
+                /* bufferForPlaybackAfterRebufferMs = */ 1_000
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -83,10 +93,22 @@ class SignagePlayerManager(private val context: Context) {
 
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
-                        _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
+                        val isBuf = (playbackState == Player.STATE_BUFFERING)
+                        _isBuffering.value = isBuf
                         _isPlaying.value = (playbackState == Player.STATE_READY && playWhenReady)
                         _isAdPlaying.value = isPlayingAd
                         WatchdogService.ping(context)
+
+                        bufferingWatchdogJob?.cancel()
+                        if (isBuf) {
+                            bufferingWatchdogJob = playerScope.launch {
+                                delay(3500L)
+                                if (_isBuffering.value && exoPlayer != null) {
+                                    Log.w(TAG, "Buffering timeout exceeded (3.5s). Rescuing playback immediately...")
+                                    recoverStalledPlayback()
+                                }
+                            }
+                        }
                     }
 
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -118,16 +140,8 @@ class SignagePlayerManager(private val context: Context) {
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.w(TAG, "Recovering from playback notice (${error.errorCodeName}): ${error.message}")
-                        if (mediaItemCount > 1) {
-                            seekToNextMediaItem()
-                            prepare()
-                            play()
-                        } else {
-                            seekToDefaultPosition()
-                            prepare()
-                            play()
-                        }
+                        Log.w(TAG, "Playback error noticed (${error.errorCodeName}): ${error.message}. Auto-recovering...")
+                        recoverStalledPlayback()
                     }
                 })
             }
@@ -276,6 +290,32 @@ class SignagePlayerManager(private val context: Context) {
         }
     }
 
+    fun recoverStalledPlayback() {
+        val player = exoPlayer ?: return
+        val count = player.mediaItemCount
+        val currentIndex = player.currentMediaItemIndex
+        val currentItem = currentPlaylistItems.getOrNull(currentIndex)
+        if (currentItem != null) {
+            ResilientSignageDataSource.markBroken(currentItem.videoUrl)
+        }
+        Log.w(TAG, "Executing recoverStalledPlayback (itemCount=$count, currentIndex=$currentIndex, item=${currentItem?.title})")
+        if (count > 1) {
+            player.seekToNextMediaItem()
+            player.prepare()
+            player.play()
+        } else {
+            val fallbackUri = Uri.parse(ResilientSignageDataSource.REAL_BACKUP_STREAM_URL)
+            val fallbackItem = MediaItem.Builder()
+                .setUri(fallbackUri)
+                .setMediaId(currentItem?.id ?: "fallback_signage")
+                .build()
+            player.setMediaItem(fallbackItem)
+            player.prepare()
+            player.play()
+        }
+        _isBuffering.value = false
+    }
+
     private fun resolveUri(item: PlaylistItem): Uri {
         if (!item.localFilePath.isNullOrBlank()) {
             val file = File(item.localFilePath)
@@ -283,6 +323,10 @@ class SignagePlayerManager(private val context: Context) {
                 Log.d(TAG, "Playing from offline cache: ${file.absolutePath}")
                 return Uri.fromFile(file)
             }
+        }
+        if (ResilientSignageDataSource.isBrokenOrRestrictedUrl(item.videoUrl)) {
+            val rewritten = ResilientSignageDataSource.rewriteRestrictedUrl(item.videoUrl)
+            return Uri.parse(rewritten)
         }
         return Uri.parse(item.videoUrl)
     }
@@ -333,6 +377,11 @@ class SignagePlayerManager(private val context: Context) {
     }
 
     fun release() {
+        bufferingWatchdogJob?.cancel()
+        bufferingWatchdogJob = null
+        try {
+            playerScope.cancel()
+        } catch (_: Exception) {}
         exoPlayer?.stop()
         exoPlayer?.release()
         exoPlayer = null

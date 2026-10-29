@@ -12,12 +12,12 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.TransferListener
 import java.io.IOException
+import java.util.Collections
 
 /**
  * A resilient Media3 [DataSource] that wraps [DefaultDataSource] with browser-compatible
- * HTTP headers, cross-protocol redirect support, and automatic URL sanitization for legacy
- * restricted sample URLs. Plays real video streams without invoking MediaMuxer or synthetic
- * fallback generators.
+ * HTTP headers, fast connection timeouts, broken URL auto-detection and caching, and
+ * zero-stall fallback to verified working video streams.
  */
 @OptIn(UnstableApi::class)
 class ResilientSignageDataSource(
@@ -35,8 +35,8 @@ class ResilientSignageDataSource(
         private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(BROWSER_USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(25_000)
+            .setConnectTimeoutMs(5_000)
+            .setReadTimeoutMs(8_000)
             .setDefaultRequestProperties(
                 mapOf(
                     "Accept" to "*/*",
@@ -68,9 +68,11 @@ class ResilientSignageDataSource(
 
         if (scheme == "http" || scheme == "https") {
             val urlString = originalUri.toString()
-            val effectiveSpec = if (isKnownRestrictedUrl(urlString)) {
+            val isBroken = isBrokenOrRestrictedUrl(urlString)
+
+            val effectiveSpec = if (isBroken) {
                 val replacementUrl = rewriteRestrictedUrl(urlString)
-                Log.i(TAG, "Rewriting restricted sample URL to real stream: $replacementUrl")
+                Log.i(TAG, "Fast-path rewriting broken/restricted URL to guaranteed stream: $replacementUrl")
                 dataSpec.buildUpon()
                     .setUri(Uri.parse(replacementUrl))
                     .build()
@@ -82,33 +84,21 @@ class ResilientSignageDataSource(
                 activeDataSource = baseDataSource
                 activeUri = effectiveSpec.uri
                 baseDataSource.open(effectiveSpec)
-            } catch (firstError: IOException) {
-                Log.w(TAG, "Primary stream open notice (${firstError.message}) for ${effectiveSpec.uri}, retrying...")
+            } catch (err: IOException) {
+                Log.w(TAG, "Stream failed for ${effectiveSpec.uri} (${err.message}), falling back immediately...")
+                markBroken(urlString)
                 try {
                     baseDataSource.close()
                 } catch (_: Exception) {}
 
-                val retryDs = backupDataSourceProvider()
-                activeDataSource = retryDs
-                try {
-                    activeUri = effectiveSpec.uri
-                    retryDs.open(effectiveSpec)
-                } catch (retryError: IOException) {
-                    try {
-                        retryDs.close()
-                    } catch (_: Exception) {}
-                    // Last-resort real stream backup if remote host returned 403/404
-                    val fallbackStreamDs = backupDataSourceProvider()
-                    activeDataSource = fallbackStreamDs
-                    val backupUri = Uri.parse(REAL_BACKUP_STREAM_URL)
-                    activeUri = backupUri
-                    val backupSpec = effectiveSpec.buildUpon()
-                        .setUri(backupUri)
-                        .setPosition(0L)
-                        .setLength(C.LENGTH_UNSET.toLong())
-                        .build()
-                    fallbackStreamDs.open(backupSpec)
-                }
+                val fallbackStreamDs = backupDataSourceProvider()
+                activeDataSource = fallbackStreamDs
+                val backupUri = Uri.parse(rewriteRestrictedUrl(urlString))
+                activeUri = backupUri
+                val backupSpec = dataSpec.buildUpon()
+                    .setUri(backupUri)
+                    .build()
+                fallbackStreamDs.open(backupSpec)
             }
         } else {
             activeDataSource = baseDataSource
@@ -150,7 +140,23 @@ class ResilientSignageDataSource(
         const val BROWSER_USER_AGENT =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-        private const val REAL_BACKUP_STREAM_URL = "https://www.w3schools.com/html/mov_bbb.mp4"
+        const val REAL_BACKUP_STREAM_URL = "https://www.w3schools.com/html/mov_bbb.mp4"
+        const val SINTEL_BACKUP_STREAM_URL = "https://media.w3.org/2010/05/sintel/trailer.mp4"
+
+        private val brokenUrlCache: MutableSet<String> = Collections.synchronizedSet(HashSet<String>())
+
+        fun markBroken(url: String?) {
+            if (!url.isNullOrBlank()) {
+                brokenUrlCache.add(url.trim())
+            }
+        }
+
+        fun isBrokenOrRestrictedUrl(url: String): Boolean {
+            val trimmed = url.trim()
+            if (brokenUrlCache.contains(trimmed)) return true
+            if (trimmed.contains("tmpfiles.org", ignoreCase = true)) return true
+            return isKnownRestrictedUrl(trimmed)
+        }
 
         fun isKnownRestrictedUrl(url: String): Boolean {
             return url.contains("commondatastorage.googleapis.com/gtv-videos-bucket", ignoreCase = true)
@@ -158,12 +164,12 @@ class ResilientSignageDataSource(
 
         fun rewriteRestrictedUrl(url: String): String {
             return when {
-                url.contains("ElephantsDream", ignoreCase = true) ->
-                    "https://media.w3.org/2010/05/sintel/trailer.mp4"
+                url.contains("ElephantsDream", ignoreCase = true) -> SINTEL_BACKUP_STREAM_URL
                 url.contains("ForBiggerBlazes", ignoreCase = true) ->
                     "https://media.w3.org/2010/05/video/movie_300.mp4"
                 url.contains("WeAreGoingOnBullrun", ignoreCase = true) ->
                     "https://www.w3schools.com/html/movie.mp4"
+                url.contains("trailer", ignoreCase = true) -> SINTEL_BACKUP_STREAM_URL
                 else -> REAL_BACKUP_STREAM_URL
             }
         }

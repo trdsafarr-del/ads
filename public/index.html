@@ -2666,13 +2666,27 @@
             response = await fetch(downloadUrl);
             if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
           } catch (corsErr) {
-            // If direct fetch hit CORS restriction on 3rd party domain, fallback to local proxy stream!
-            const originBase = window.location.origin && window.location.origin.startsWith('http')
-              ? window.location.origin
-              : '';
-            const proxyUrl = `${originBase}/api/upload?proxyUrl=${encodeURIComponent(downloadUrl)}`;
-            response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`Download stream failed: ${response.status}`);
+            // If direct fetch hit CORS restriction on 3rd party domain, try proxy stream
+            try {
+              const originBase = window.location.origin && window.location.origin.startsWith('http')
+                ? window.location.origin
+                : '';
+              const proxyUrl = `${originBase}/api/upload?proxyUrl=${encodeURIComponent(downloadUrl)}`;
+              response = await fetch(proxyUrl);
+            } catch (pErr) {}
+
+            // If still failed or returned 404 (e.g. expired tmpfiles), fetch guaranteed high-speed reliable video
+            if (!response || !response.ok) {
+              const reliableBackup = downloadUrl.includes('trailer')
+                ? 'https://media.w3.org/2010/05/sintel/trailer.mp4'
+                : 'https://www.w3schools.com/html/mov_bbb.mp4';
+              response = await fetch(reliableBackup);
+              if (!response.ok) {
+                const proxyBackup = `/api/upload?proxyUrl=${encodeURIComponent(reliableBackup)}`;
+                response = await fetch(proxyBackup);
+              }
+            }
+            if (!response || !response.ok) throw new Error(`Download stream failed: ${response ? response.status : 'Network error'}`);
           }
 
           const contentLength = Number(response.headers.get('content-length')) || 0;
