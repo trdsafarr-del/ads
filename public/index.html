@@ -1123,6 +1123,7 @@
       updatedAtMs: 0
     };
 
+    let isUploading = false;
     let currentUploadMode = 'LINK';
     let selectedRawFile = null;
     let selectedBlobUrl = null;
@@ -1448,6 +1449,7 @@
     });
 
     async function loadDashboardData() {
+      if (isUploading) return;
       try {
         const [playlistRes, pairRes, fsState] = await Promise.all([
           fetch('/api/playlist').catch(() => null),
@@ -1477,32 +1479,48 @@
         }
 
         const localVideos = (currentState && currentState.videos) || [];
-        const localHasCustom = localVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.includes(v.id));
+        const localVer = Number(currentState && currentState.version) || 1;
 
         const remoteVideos = (chosenPlaylist && chosenPlaylist.videos) || [];
-        const remoteHasCustom = remoteVideos.some(v => v && v.id && !MOCK_VIDEO_IDS.includes(v.id));
-        const remoteOnlyMock = remoteVideos.length > 0 && remoteVideos.every(v => v && v.id && MOCK_VIDEO_IDS.includes(v.id));
+        const remoteVer = Number(chosenPlaylist && chosenPlaylist.version) || 0;
 
-        if (localHasCustom && (!chosenPlaylist || remoteOnlyMock || !remoteHasCustom)) {
-          // User has uploaded real videos! NEVER allow mock videos to wipe out real uploads after refresh!
-          // Push local custom videos back to server so server and TVs adopt user videos
-          fetch('/api/playlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              videos: currentState.videos,
-              orientation: currentState.orientation,
-              videoOrientation: currentState.videoOrientation,
-              scaleMode: currentState.scaleMode,
-              lastPushedVideoId: currentState.lastPushedVideoId,
-              lastPushTimestamp: currentState.lastPushTimestamp,
-              activeVideoIds: currentState.activeVideoIds
-            })
-          }).catch(() => {});
-          savePersistedState(currentState);
-        } else if (chosenPlaylist) {
-          currentState = chosenPlaylist;
-          savePersistedState(currentState);
+        if (isUploading) return;
+
+        if (chosenPlaylist) {
+          // Never wipe out local custom videos that the remote hasn't received yet
+          const missingInRemote = localVideos.filter(
+            lv => lv && lv.id && !remoteVideos.some(rv => rv.id === lv.id)
+          );
+
+          if (missingInRemote.length > 0 || localVer > remoteVer) {
+            // Local has newer or more videos: keep all local videos and merge any new ones from remote
+            const merged = [...localVideos];
+            remoteVideos.forEach(rv => {
+              if (rv && rv.id && !merged.some(m => m.id === rv.id)) {
+                merged.push(rv);
+              }
+            });
+            currentState.videos = merged;
+            savePersistedState(currentState);
+
+            // Sync merged playlist to server so server also stores all videos
+            fetch('/api/playlist', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                videos: currentState.videos,
+                orientation: currentState.orientation,
+                videoOrientation: currentState.videoOrientation,
+                scaleMode: currentState.scaleMode,
+                lastPushedVideoId: currentState.lastPushedVideoId,
+                lastPushTimestamp: currentState.lastPushTimestamp,
+                activeVideoIds: currentState.activeVideoIds
+              })
+            }).catch(() => {});
+          } else if (remoteVer >= localVer) {
+            currentState = chosenPlaylist;
+            savePersistedState(currentState);
+          }
         }
 
         // Preload IndexedDB / Firestore video blobs for any uploaded videos
@@ -2047,51 +2065,54 @@
       const newVideoId = 'vid_' + Date.now();
       const title = titleInput || (selectedFileName ? selectedFileName.replace(/\.[^/.]+$/, '') : 'Signage Broadcast');
 
+      const originBase = window.location.origin && window.location.origin.startsWith('http')
+        ? window.location.origin
+        : 'https://ads-broo.vercel.app';
+      const expectedStreamUrl = `${originBase}/api/upload?id=${encodeURIComponent(newVideoId)}`;
+
       if (currentUploadMode === 'FILE') {
         if (!selectedRawFile) {
           showToast('Please select a video file (.mp4) from your device first!');
           return;
         }
 
-        const previewBlobUrl = selectedBlobUrl || URL.createObjectURL(selectedRawFile);
+        const fileToUpload = selectedRawFile;
+        const previewBlobUrl = selectedBlobUrl || URL.createObjectURL(fileToUpload);
         localBlobUrls[newVideoId] = previewBlobUrl;
+        saveVideoBlobToIdb(newVideoId, fileToUpload);
 
-        // OPTIMISTIC ADD: Video card appears in the list in 0ms!
-        const optimisticVideoObj = {
+        // 1. INSTANT ADD: Video appears in list in 0.00ms!
+        const newVideoObj = {
           id: newVideoId,
           title,
-          url: previewBlobUrl,
+          url: expectedStreamUrl,
           duration,
           order: (currentState.videos || []).length + 1,
           adTagUrl: enableVast ? vastTag : null
         };
 
         currentState.videos = currentState.videos || [];
-        currentState.videos.push(optimisticVideoObj);
+        currentState.videos.push(newVideoObj);
         selectedVideoIdsSet.add(newVideoId);
-        renderPlaylist(currentState);
-
-        let finalUrl = previewBlobUrl;
-        try {
-          btn.disabled = true;
-          finalUrl = await uploadRealVideoFile(selectedRawFile, newVideoId, (msg) => {
-            btn.textContent = msg;
-            if (statusEl) statusEl.textContent = msg;
-          });
-          optimisticVideoObj.url = finalUrl;
-        } catch (err) {
-          showToast('Upload note: Video ready locally. ' + (err.message || ''));
-        } finally {
-          btn.disabled = false;
-          btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
+        currentState.version = (Number(currentState.version) || 1) + 1;
+        if (pushImmediately) {
+          currentState.lastPushedVideoId = newVideoId;
+          currentState.lastPushTimestamp = Date.now();
+          currentState.activeVideoIds = null;
         }
 
+        // Render card in list and persist to localStorage immediately
+        renderPlaylist(currentState);
+        savePersistedState(currentState);
+
+        // Reset input fields immediately so UI is clean
         document.getElementById('newVideoTitle').value = '';
         document.getElementById('newVideoUrl').value = '';
         selectedRawFile = null;
         selectedFileName = '';
-        if (statusEl) statusEl.textContent = 'Click here to choose a video file to upload';
+        if (statusEl) statusEl.textContent = 'Uploading: 0%...';
 
+        // Immediately push playlist to server so it has all videos
         publishAllChanges({
           lastPushedVideoId: pushImmediately ? newVideoId : currentState.lastPushedVideoId,
           lastPushTimestamp: Date.now(),
@@ -2107,7 +2128,32 @@
           );
         }
 
-        openOfflinePopup(optimisticVideoObj);
+        openOfflinePopup(newVideoObj);
+
+        // 2. Perform background chunk upload
+        isUploading = true;
+        btn.disabled = true;
+
+        uploadRealVideoFile(fileToUpload, newVideoId, (msg) => {
+          btn.textContent = msg;
+          if (statusEl) statusEl.textContent = msg;
+        }).then((finalUrl) => {
+          if (finalUrl && newVideoObj) {
+            newVideoObj.url = finalUrl;
+            savePersistedState(currentState);
+            renderPlaylist(currentState);
+          }
+          showToast(`Video "${title}" uploaded successfully & synced!`);
+        }).catch((err) => {
+          console.error('Upload error:', err);
+          showToast(`Upload note: Video saved locally. ${err.message || ''}`);
+        }).finally(() => {
+          isUploading = false;
+          btn.disabled = false;
+          btn.innerHTML = '&#128640; Upload / Add &amp; Play on TVs Now';
+          if (statusEl) statusEl.textContent = 'Click here to choose a video file to upload';
+        });
+
       } else {
         let finalUrl = document.getElementById('newVideoUrl').value.trim();
         if (!finalUrl) {
@@ -2130,6 +2176,16 @@
         currentState.videos = currentState.videos || [];
         currentState.videos.push(newVideoObj);
         selectedVideoIdsSet.add(newVideoId);
+        currentState.version = (Number(currentState.version) || 1) + 1;
+        if (pushImmediately) {
+          currentState.lastPushedVideoId = newVideoId;
+          currentState.lastPushTimestamp = Date.now();
+          currentState.activeVideoIds = null;
+        }
+
+        // Render card in list immediately!
+        renderPlaylist(currentState);
+        savePersistedState(currentState);
 
         document.getElementById('newVideoTitle').value = '';
         document.getElementById('newVideoUrl').value = '';
